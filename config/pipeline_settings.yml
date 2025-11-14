@@ -1,0 +1,12 @@
+
+database:
+  driver: Postgres
+  host: ${PULSE_HOST}
+  user: ${PULSE_USER}
+  password: ${PULSE_PW}
+  dbname: ${PULSE_DB}
+
+pipeline:
+  generate_sop: true
+  generate_qc_packet: true
+

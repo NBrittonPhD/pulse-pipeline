@@ -1,0 +1,29 @@
+pulse-pipeline/
+   ├── sql/
+   │     └── ddl/
+   ├── r/
+   │     ├── runner.R
+   │     ├── register_source.R
+   │     ├── log_batch_ingest.R
+   │     ├── validate_schema.R
+   │     ├── profile_data.R
+   │     ├── sync_metadata.R
+   │     ├── harmonize_data.R
+   │     ├── execute_qc_rules.R
+   │     ├── generate_qc_packet.R
+   │     ├── finalize_release.R
+   │     └── utilities/
+   ├── rmd/
+   │     ├── sop_template.Rmd
+   │     ├── qc_packet_template.Rmd
+   │     └── governance_reports.Rmd
+   ├── config/
+   │     ├── pipeline_settings.yml
+   │     ├── rule_categories.yml
+   │     └── dashboard.yml
+   ├── diagrams/
+   ├── docs/
+   │     └── SOP_rendered/
+   ├── .gitignore
+   ├── README.md
+   └── pulse_pipeline.Rproj

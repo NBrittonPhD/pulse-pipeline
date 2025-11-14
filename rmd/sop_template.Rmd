@@ -1,0 +1,31 @@
+
+---
+title: "PULSE Standard Operating Procedure"
+output: word_document
+params:
+  ingest_id: "placeholder"
+---
+
+```{r setup, include=FALSE}
+library(DBI)
+con <- DBI::dbConnect(RPostgres::Postgres())
+steps <- dbReadTable(con, "PIPELINE_STEP")
+rules <- dbReadTable(con, "RULE_LIBRARY")
+meta  <- dbReadTable(con, "METADATA")
+```
+
+# Pipeline Steps
+```{r}
+knitr::kable(steps)
+```
+
+# Governing Rule Library
+```{r}
+knitr::kable(rules)
+```
+
+# Core Metadata Dictionary
+```{r}
+knitr::kable(meta)
+```
+
