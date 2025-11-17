@@ -8,10 +8,18 @@ params:
 
 ```{r setup, include=FALSE}
 library(DBI)
-con <- DBI::dbConnect(RPostgres::Postgres())
-steps <- dbReadTable(con, "PIPELINE_STEP")
-rules <- dbReadTable(con, "RULE_LIBRARY")
-meta  <- dbReadTable(con, "METADATA")
+library(RPostgres)
+library(dplyr)
+library(here)
+source(here::here("r", "connect_to_pulse.R"))
+
+# Connect using your environment variables
+con <- connect_to_pulse()
+
+# Use lowercase table names (Postgres lowercases everything)
+steps <- dbReadTable(con, "pipeline_step")
+rules <- dbReadTable(con, "rule_library")
+meta  <- dbReadTable(con, "metadata")
 ```
 
 # Pipeline Steps
