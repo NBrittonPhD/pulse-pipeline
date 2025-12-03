@@ -1,0 +1,39 @@
+
+---
+title: "PULSE Standard Operating Procedure"
+output: word_document
+params:
+  ingest_id: "placeholder"
+---
+
+```{r setup, include=FALSE}
+library(DBI)
+library(RPostgres)
+library(dplyr)
+library(here)
+source(here::here("r", "connect_to_pulse.R"))
+
+# Connect using your environment variables
+con <- connect_to_pulse()
+
+# Use lowercase table names (Postgres lowercases everything)
+steps <- dbReadTable(con, "pipeline_step")
+rules <- dbReadTable(con, "rule_library")
+meta  <- dbReadTable(con, "metadata")
+```
+
+# Pipeline Steps
+```{r}
+knitr::kable(steps)
+```
+
+# Governing Rule Library
+```{r}
+knitr::kable(rules)
+```
+
+# Core Metadata Dictionary
+```{r}
+knitr::kable(meta)
+```
+

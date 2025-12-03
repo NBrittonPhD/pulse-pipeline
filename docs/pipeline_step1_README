@@ -1,0 +1,138 @@
+# PULSE Pipeline — Step 1 × Cluster 1: Source Registration
+
+## Purpose
+
+Step 1 registers a new data source into the PULSE governance layer.
+
+It does four main things:
+
+1. Validates the source definition against controlled vocabularies.
+2. Inserts or updates the source record in `governance.source_registry`.
+3. Creates the on-disk folder structure for that source across `raw/`, `staging/`, and `validated/` zones (plus governance folders).
+4. Writes a governance audit log entry and records step completion in `governance.pipeline_step`.
+
+This step is wired into the main pipeline runner so that Step 1 runs automatically when the pipeline is launched for a given `ingest_id`.
+
+---
+
+## Key Database Objects
+
+- `governance.source_registry`  
+  - Canonical registry of all data sources.
+  - Contains identifiers, ownership, ingest method, schema version, PHI class, active flag, and governance timestamps.
+
+- `governance.audit_log`  
+  - Append-only table of governance events.
+  - Step 1 writes `event_type = 'source_registration'` or `event_type = 'source_update'`.
+
+- `governance.pipeline_step`  
+  - Master list of pipeline steps.
+  - Step 1 is `STEP_001` / `register_source`.
+  - Step 1 wrapper records completion into this table.
+
+---
+
+## Key R Functions (Step 1)
+
+- `connect_to_pulse()`  
+  - File: `r/connect_to_pulse.R`  
+  - Opens a Postgres connection using environment variables `PULSE_DB`, `PULSE_HOST`, `PULSE_USER`, `PULSE_PW`.
+
+- `load_pipeline_settings()`  
+  - File: `r/runner.R`  
+  - Loads `config/pipeline_settings.yml` (schemas + controlled vocab lists).
+
+- `get_pipeline_steps(con, settings)`  
+  - File: `r/runner.R`  
+  - Reads `governance.pipeline_step`, filters `enabled == TRUE`, orders by `step_order`.
+
+- `execute_step(step, con, ingest_id, settings)`  
+  - File: `r/runner.R`  
+  - Dispatches each pipeline step:
+    - For `STEP_001`: calls `load_source_params()` and then `run_step1_register_source()`.
+    - For `step_type == "R"`: parses `code_snippet` and calls the named function with `(con, ingest_id, settings)`.
+    - For `step_type == "SQL"`: runs `code_snippet` as SQL.
+    - For `step_type == "RMD"`: renders the R Markdown with parameters.
+
+- `run_pipeline(ingest_id)`  
+  - File: `r/runner.R`  
+  - Connects to DB, loads settings, fetches steps, loops over them, and calls `execute_step()`.
+
+- `validate_source_entry(candidate, settings)`  
+  - File: `r/utilities/validate_source_entry.R`  
+  - Checks required fields and validates vocab for key fields like `system_type`, `update_frequency`, `ingest_method`, `pii_classification`.
+
+- `create_source_folders(source_id, base_path = ".")`  
+  - File: `r/utilities/create_source_folders.R`  
+  - Reads `directory_structure.yml` (or equivalent structure file) and creates all required folders for the new source, including governance reporting/log/qc dirs.
+
+- `write_audit_event(con, ingest_id, event_type, object_type, object_name, details, status)`  
+  - File: `r/steps/write_audit_event.R`  
+  - Writes a JSON-encoded row to `governance.audit_log` using a UUID-based `audit_id`.
+
+- `register_source(...)`  
+  - File: `r/steps/register_source.R`  
+  - Main Step 1 engine:
+    - Loads pipeline settings.
+    - Validates input via `validate_source_entry()`.
+    - Inserts or updates `governance.source_registry`.
+    - For new sources: calls `create_source_folders()` and writes `source_registration` audit event.
+    - For existing sources: writes `source_update` audit event.
+
+- `write_pipeline_step(con, step_id, ...)`  
+  - File: `r/utilities/write_pipeline_step.R`  
+  - Records or updates a row in `governance.pipeline_step` representing a step definition or completion metadata.
+
+- `run_step1_register_source(con, source_params, settings = NULL)`  
+  - File: `r/steps/run_step1_register_source.R`  
+  - Thin wrapper around `register_source()` specialized for Step 1.  
+  - Calls `register_source()` with `source_params`.  
+  - Calls `write_pipeline_step()` to log `STEP_001` with description and code snippet.
+
+- `load_source_params(ingest_id)`  
+  - File: `r/utilities/load_source_params.R`  
+  - Reads `config/source_params.yml` and returns it as a list.
+
+- `pulse_launch(ingest_id, source_params, auto_write_params = TRUE)`  
+  - File: `pulse-launch.R`  
+  - High-level entry point:
+    - Optionally writes `config/source_params.yml` from `source_params`.
+    - Calls `run_pipeline(ingest_id)` to execute the pipeline (currently only Step 1 enabled).
+
+---
+
+## User-facing Script for Step 1
+
+- `r/scripts/1_onboard_new_source.R`  
+  - Or similar path as used in your repo.  
+  - Workflow:
+    1. `source("pulse-init-all.R")` — initializes system / loads packages / sets options.
+    2. `source("pulse-launch.R")` — loads `pulse_launch()`.
+    3. **USER INPUT SECTION**:
+       - User sets `ingest_id`.
+       - User fills `source_params <- list(...)` with proper values.
+    4. Calls `pulse_launch(ingest_id, source_params, auto_write_params = TRUE)`.
+
+This script is the human-friendly "front door" for onboarding a new source.
+
+---
+
+## Testing
+
+- Unit tests:
+  - `tests/testthat/test_step1_register_source.R`
+    - Tests:
+      - `validate_source_entry()` rejects invalid vocab.
+      - `validate_source_entry()` accepts valid vocab.
+      - `register_source()` inserts into `governance.source_registry`.
+      - `register_source()` writes audit log entries.
+      - `run_step1_register_source()` logs completion in `governance.pipeline_step`.
+
+- Integration tests:
+  - `tests/testthat/test_step1_integration.R`
+    - Uses `pulse_launch()` and `run_pipeline()` to:
+      - Write `config/source_params.yml`.
+      - Execute Step 1 through the runner.
+      - Validate DB changes, folder creation, and audit logging end-to-end.
+
+All Step 1 tests currently pass (`PASS`), and Step 1 runs cleanly via `run_pipeline()` and via `1_onboard_new_source.R`.

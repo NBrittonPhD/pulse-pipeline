@@ -1,0 +1,32 @@
+# =============================================================================
+# DIRECTORY STRUCTURE TEMPLATE FOR NEW SOURCES
+# =============================================================================
+# create_source_folders() reads this file and generates the directory tree
+# for a newly registered source. All paths may include "{source_id}" as a
+# placeholder, which the function replaces at runtime.
+#
+# The generated folders support:
+#   • Raw zone ingestion + archiving
+#   • Staging zone processing
+#   • Validated zone storage
+#   • Governance logs + QC outputs
+#
+# NOTE:
+#   The base path is assumed to be project root (".").
+# =============================================================================
+
+raw:
+  - "{source_id}/incoming/"
+  - "{source_id}/archive/"
+
+staging:
+  - "{source_id}/incoming/"
+  - "{source_id}/archive/"
+
+validated:
+  - "{source_id}/"
+
+governance:
+  - "logs/"
+  - "qc/"
+  - "reports/"

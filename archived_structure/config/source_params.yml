@@ -1,0 +1,10 @@
+source_id: tr2026_test
+source_name: Example Source Attempt
+system_type: CSV
+update_frequency: monthly
+data_owner: Data Owner Name
+ingest_method: pull
+expected_schema_version: 1.0.0
+retention_policy: Raw indefinite; staging 30 days
+pii_classification: PHI
+active: yes

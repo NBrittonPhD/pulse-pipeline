@@ -1,0 +1,10 @@
+source_id: integration_test
+source_name: Integration Test Source
+system_type: CSV
+update_frequency: monthly
+data_owner: Tester
+ingest_method: pull
+expected_schema_version: 1.0.0
+retention_policy: Raw indefinite
+pii_classification: PHI
+active: yes

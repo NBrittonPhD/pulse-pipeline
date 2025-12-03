@@ -1,12 +1,105 @@
+# =============================================================================
+# PULSE PIPELINE — GLOBAL CONFIGURATION & CONTROLLED VOCABULARIES
+# =============================================================================
+# This file defines:
+#   • Database schema names
+#   • Controlled vocabularies for Step 1 validations
+#   • Reserved words for ingest + metadata pipelines
+#
+# NOTE:
+#   This YAML is loaded by:
+#       - validate_source_entry()
+#       - register_source()
+#       - pulse_launch()
+#       - load_pipeline_settings()
+#   and must remain machine-readable.
+# =============================================================================
 
-database:
-  driver: Postgres
-  host: ${PULSE_HOST}
-  user: ${PULSE_USER}
-  password: ${PULSE_PW}
-  dbname: ${PULSE_DB}
 
-pipeline:
-  generate_sop: true
-  generate_qc_packet: true
+# -----------------------------------------------------------------------------
+# Database schemas used throughout the PULSE pipeline
+# -----------------------------------------------------------------------------
+schemas:
+  raw: "raw"
+  staging: "staging"
+  validated: "validated"
+  governance: "governance"
+  reference: "reference"
 
+
+# -----------------------------------------------------------------------------
+# Controlled vocabulary: system types
+# -----------------------------------------------------------------------------
+# Acceptable values for system_type in source registration
+# -----------------------------------------------------------------------------
+allowed_system_type:
+  - "CSV"
+  - "XLSX"
+  - "SQL"
+  - "API"
+  - "FHIR"
+  - "Other"
+
+
+# -----------------------------------------------------------------------------
+# Controlled vocabulary: update frequency
+# -----------------------------------------------------------------------------
+allowed_update_frequency:
+  - "daily"
+  - "weekly"
+  - "biweekly"
+  - "monthly"
+  - "quarterly"
+  - "annually"
+  - "ad_hoc"
+
+
+# -----------------------------------------------------------------------------
+# Controlled vocabulary: ingest method
+# -----------------------------------------------------------------------------
+allowed_ingest_method:
+  - "push"
+  - "pull"
+  - "api"
+  - "sftp"
+  - "manual"
+
+
+# -----------------------------------------------------------------------------
+# Controlled vocabulary: PHI classification
+# -----------------------------------------------------------------------------
+allowed_pii_classification:
+  - "PHI"
+  - "Limited"
+  - "NonPHI"
+
+
+# -----------------------------------------------------------------------------
+# Validation: required fields for source_registry
+# -----------------------------------------------------------------------------
+required_source_fields:
+  - "source_id"
+  - "source_name"
+  - "system_type"
+  - "update_frequency"
+  - "data_owner"
+  - "ingest_method"
+  - "expected_schema_version"
+  - "pii_classification"
+  - "active"
+
+
+# -----------------------------------------------------------------------------
+# Directory structure control
+# -----------------------------------------------------------------------------
+# This is referenced by create_source_folders(), but the actual templates
+# live in directory_structure.yml — this section exists only for global refs.
+# -----------------------------------------------------------------------------
+directory_structure_file: "directory_structure.yml"
+
+
+# -----------------------------------------------------------------------------
+# Default values for certain pipeline settings
+# -----------------------------------------------------------------------------
+default_schema_version: "1.0.0"
+default_active_status: TRUE

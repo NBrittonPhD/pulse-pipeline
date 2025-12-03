@@ -1,0 +1,39 @@
+
+database:
+  driver: Postgres
+  host: ${PULSE_HOST}
+  user: ${PULSE_USER}
+  password: ${PULSE_PW}
+  dbname: ${PULSE_DB}
+
+pipeline:
+  generate_sop: true
+  generate_qc_packet: true
+
+allowed_system_type:
+  - CSV
+  - XLSX
+  - SQL
+  - API
+  - FHIR
+  - Other
+
+allowed_update_frequency:
+  - ad-hoc
+  - daily
+  - weekly
+  - monthly
+  - quarterly
+
+allowed_ingest_method:
+  - push
+  - pull
+  - api_sync
+  - manual_upload
+
+allowed_pii_classification:
+  - PHI
+  - Limited
+  - De-identified
+  - Aggregate
+
