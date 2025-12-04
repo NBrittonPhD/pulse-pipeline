@@ -21,9 +21,7 @@ The pipeline is controlled by metadata stored in the database:
 - METADATA + METADATA_HISTORY — core data dictionary
 - TRANSFORM_LOG, AUDIT_LOG, DATA_PROFILE, etc.
 
-flowchart TD
-
-    %% User Entry
+## Flow Chart
     A1[User Runs<br>1_onboard_new_source.R] --> A2[pulse-init-all.R<br>(Bootstrap Environment)]
     A2 --> A3[pulse_launch()]
 
