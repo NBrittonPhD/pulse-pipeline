@@ -103,3 +103,15 @@ directory_structure_file: "directory_structure.yml"
 # -----------------------------------------------------------------------------
 default_schema_version: "1.0.0"
 default_active_status: TRUE
+
+# -------------------------------------------------------------
+# Controlled vocabulary for source_type
+# -------------------------------------------------------------
+allowed_source_types:
+  - "TRAUMA_REGISTRY"
+  - "CISIR"
+  - "CLARITY"
+  - "EMEDS"
+
+  
+  

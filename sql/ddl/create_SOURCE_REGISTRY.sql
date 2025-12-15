@@ -6,7 +6,7 @@
 CREATE TABLE IF NOT EXISTS governance.source_registry (
     
     -- Core identifiers
-    source_id               VARCHAR(50) PRIMARY KEY,
+    source_id               VARCHAR(100) PRIMARY KEY,
     source_name             VARCHAR(200) NOT NULL,
 
     -- Classification + system metadata

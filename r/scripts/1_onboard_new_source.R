@@ -21,39 +21,21 @@
 #
 # =============================================================================
 
-# ------------------------------
-# Initialize PULSE system
-# ------------------------------
-# This sets up:
-#   - DB connection infrastructure
-#   - Core schemas (raw, staging, validated, governance, reference)
-#   - Core governance tables (SOURCE_REGISTRY, AUDIT_LOG, PIPELINE_STEP, etc.)
-#   - Any required reference structures
-source("pulse-init-all.R")
-
-# ------------------------------
-# Load pulse_launch()
-# ------------------------------
-# pulse_launch() is a helper that:
-#   - Optionally writes config/source_params.yml
-#   - Calls run_pipeline(ingest_id)
-#   - Ensures STEP_001 (register_source) is run with your source_params
-source("pulse-launch.R")
-
 # =============================================================================
 # USER INPUT SECTION — EDIT THESE FIELDS
 # =============================================================================
 
 # A unique identifier for this onboarding run.
 # Convention: <source_id>_<time or test string>, e.g. "tr2026_test_01"
-ingest_id <- "tr2026_test_id"
+ingest_id <- "trauma_registry2026_test_002"
 
 # Core metadata for the source you are onboarding.
 # Only edit the values on the right-hand side.
 source_params <- list(
-  # Unique identifier for the source (stable, machine-readable).
+  # Unique identifier for the source (stable, machine-readable). 
+  # Should be the file name where the raw data resides.
   # Keep short; lowercase; use letters, numbers, and underscores.
-  source_id = "tr2026_test",
+  source_id = "trauma_registry2026_test",
   
   # Human-readable name for the source.
   source_name = "Example Source Attempt",
@@ -96,6 +78,25 @@ source_params <- list(
 # =============================================================================
 # END USER INPUT SECTION
 # =============================================================================
+
+# ------------------------------
+# Initialize PULSE system
+# ------------------------------
+# This sets up:
+#   - DB connection infrastructure
+#   - Core schemas (raw, staging, validated, governance, reference)
+#   - Core governance tables (SOURCE_REGISTRY, AUDIT_LOG, PIPELINE_STEP, etc.)
+#   - Any required reference structures
+source("pulse-init-all.R")
+
+# ------------------------------
+# Load pulse_launch()
+# ------------------------------
+# pulse_launch() is a helper that:
+#   - Optionally writes config/source_params.yml
+#   - Calls run_pipeline(ingest_id)
+#   - Ensures STEP_001 (register_source) is run with your source_params
+source("pulse-launch.R")
 
 
 # ------------------------------
