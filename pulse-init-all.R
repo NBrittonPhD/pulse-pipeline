@@ -20,6 +20,7 @@
 
 library(DBI)
 library(readr)
+source("r/utilities/normalize_names.R")
 
 # -------------------------------------------------------------------------
 # 1. Load DB connection wrapper
