@@ -25,6 +25,7 @@
 #         - is_primary_key     (lgl)  # TRUE if part of PK
 #         - ordinal_position   (int)  # expected position/order in table
 #         - schema_version     (chr)  # version tag for expected schema
+#         - target_type        (chr)  # desired SQL type for staging (from type_decision_table)
 #
 #   observed_schema (tibble/data.frame)
 #     • One row per observed column in raw.<lake_table_name>.
@@ -103,7 +104,8 @@ compare_fields <- function(expected_schema,
     "is_required",
     "is_primary_key",
     "ordinal_position",
-    "schema_version"
+    "schema_version",
+    "target_type"
   )
   
   missing_expected_cols <- setdiff(required_expected_cols, names(expected_schema))
@@ -403,7 +405,119 @@ compare_fields <- function(expected_schema,
       )
     }
   }
-  
+
+  # ----------------------------------------------------------------------------
+  # 6. Target type validation (for staging schema coercion)
+  # ----------------------------------------------------------------------------
+  # Compare the observed data_type against the target_type from the
+  # type_decision_table. This validates whether the current Postgres type
+  # matches the desired type for the staging schema.
+  #
+  # We normalize both types for comparison since Postgres reports types in
+
+  # different formats (e.g., "character varying" vs "text", "integer" vs "int4").
+  # ----------------------------------------------------------------------------
+
+  # Helper function to normalize type names for comparison
+  normalize_type <- function(dtype, udt) {
+    dtype_lower <- tolower(ifelse(is.na(dtype), "", dtype))
+    udt_lower   <- tolower(ifelse(is.na(udt), "", udt))
+
+    dplyr::case_when(
+      # Integer types
+      dtype_lower %in% c("integer", "int", "int4", "smallint", "int2", "bigint", "int8") ~ "integer",
+      udt_lower %in% c("int4", "int2", "int8") ~ "integer",
+      # Numeric types
+      dtype_lower %in% c("numeric", "decimal", "real", "double precision") ~ "numeric",
+      udt_lower %in% c("numeric", "float4", "float8") ~ "numeric",
+      # Boolean types
+      dtype_lower == "boolean" | udt_lower == "bool" ~ "boolean",
+      # Date types
+      dtype_lower == "date" ~ "date",
+      # Timestamp types
+      grepl("timestamp", dtype_lower) ~ "timestamp",
+      # Time types
+      dtype_lower == "time" | grepl("^time", dtype_lower) ~ "time",
+      # Text types (default)
+      dtype_lower %in% c("text", "character varying", "varchar", "char", "character") ~ "text",
+      udt_lower %in% c("text", "varchar", "bpchar") ~ "text",
+      # Fallback
+      TRUE ~ "text"
+    )
+  }
+
+  # Check for target type mismatches and missing target types
+  if (length(common_names) > 0L) {
+    target_check <- expected_tbl |>
+      dplyr::filter(.data$lake_variable_name %in% common_names) |>
+      dplyr::select(
+        .data$lake_variable_name,
+        .data$target_type
+      ) |>
+      dplyr::left_join(
+        observed_tbl |>
+          dplyr::select(
+            .data$lake_variable_name,
+            observed_data_type = .data$data_type,
+            observed_udt_name  = .data$udt_name
+          ),
+        by = "lake_variable_name"
+      ) |>
+      dplyr::mutate(
+        observed_type_normalized = normalize_type(.data$observed_data_type, .data$observed_udt_name),
+        target_type_normalized   = tolower(ifelse(is.na(.data$target_type), "", .data$target_type))
+      )
+
+    # 6a. Missing target type (variable not in type_decision_table)
+    missing_target <- target_check |>
+      dplyr::filter(is.na(.data$target_type) | .data$target_type == "")
+
+    if (nrow(missing_target) > 0) {
+      for (i in seq_len(nrow(missing_target))) {
+        row <- missing_target[i, ]
+        issues[[length(issues) + 1L]] <- make_issue(
+          lake_variable_name = row$lake_variable_name,
+          issue_code   = "TYPE_TARGET_MISSING",
+          issue_type   = "No target type defined in type_decision_table",
+          issue_group  = "dtype",
+          severity     = "warning",
+          is_blocking  = FALSE,
+          expected_value = "target_type should be defined in type_decision_table.xlsx",
+          observed_value = paste0("observed type: ", row$observed_data_type, " (", row$observed_udt_name, ")"),
+          check_context  = "variable_level"
+        )
+      }
+    }
+
+    # 6b. Target type mismatch (observed type != target type)
+    target_mismatch <- target_check |>
+      dplyr::filter(
+        !is.na(.data$target_type),
+        .data$target_type != "",
+        .data$observed_type_normalized != .data$target_type_normalized
+      )
+
+    if (nrow(target_mismatch) > 0) {
+      for (i in seq_len(nrow(target_mismatch))) {
+        row <- target_mismatch[i, ]
+        issues[[length(issues) + 1L]] <- make_issue(
+          lake_variable_name = row$lake_variable_name,
+          issue_code   = "TYPE_TARGET_MISMATCH",
+          issue_type   = "Observed type does not match target type for staging",
+          issue_group  = "dtype",
+          severity     = "warning",
+          is_blocking  = FALSE,
+          expected_value = paste0("target_type = ", row$target_type),
+          observed_value = paste0(
+            "observed: ", row$observed_data_type, " (", row$observed_udt_name, ") ",
+            "-> normalized: ", row$observed_type_normalized
+          ),
+          check_context  = "variable_level"
+        )
+      }
+    }
+  }
+
   # ----------------------------------------------------------------------------
   # Bind all issues into a single tibble
   # ----------------------------------------------------------------------------

@@ -128,7 +128,8 @@ validate_schema <- function(con,
             COALESCE(is_nullable, TRUE) as is_nullable,
             COALESCE(is_required, FALSE) as is_required,
             COALESCE(is_primary_key, FALSE) as is_primary_key,
-            ordinal_position
+            ordinal_position,
+            target_type
         FROM reference.metadata
         WHERE is_active = TRUE
     ")

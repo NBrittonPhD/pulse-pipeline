@@ -12,6 +12,7 @@
 #     • Variables not yet present in Postgres → nullable + not required
 #     • Primary key metadata
 #     • type_descriptor (Postgres structural truth only)
+#     • target_type (desired SQL type from type_decision_table.xlsx)
 #     • Versioning metadata
 #     • Column-level and table-level SHA256 hashes for drift detection
 #
@@ -20,6 +21,7 @@
 #   schema_version  e.g. "2025.0"
 #   effective_from  Date
 #   effective_to    Date or NA
+#   type_decision_path  Path to type_decision_table.xlsx (default: reference/type_decision_table.xlsx)
 #
 # OUTPUTS
 #   Tibble with one row per expected variable
@@ -29,10 +31,11 @@
 build_expected_schema_dictionary <- function(con,
                                              schema_version  = "2025.0",
                                              effective_from  = Sys.Date(),
-                                             effective_to    = NA) {
-  
+                                             effective_to    = NA,
+                                             type_decision_path = "reference/type_decision_table.xlsx") {
+
   # Required packages ----------------------------------------------------------
-  required_pkgs <- c("DBI", "dplyr", "tibble", "digest", "stringr")
+  required_pkgs <- c("DBI", "dplyr", "tibble", "digest", "stringr", "readxl")
   missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
   if (length(missing_pkgs) > 0) {
     stop("Missing required packages: ", paste(missing_pkgs, collapse = ", "))
@@ -186,7 +189,59 @@ build_expected_schema_dictionary <- function(con,
         TRUE                                  ~ "text"
       )
     )
-  
+
+  # =============================================================================
+  # SECTION 5B — Load target types from type_decision_table.xlsx
+
+  # =============================================================================
+  # The type_decision_table contains human-reviewed target types (final_type)
+
+  # for each variable. These represent the desired SQL storage types for the
+  # staging schema. Variables not present in the type_decision_table will have
+  # target_type = NA.
+  # =============================================================================
+
+  # Resolve path relative to project root if needed
+  proj_root <- getOption("pulse.proj_root", default = ".")
+  type_decision_full_path <- if (startsWith(type_decision_path, "/")) {
+    type_decision_path
+  } else {
+    file.path(proj_root, type_decision_path)
+  }
+
+  if (file.exists(type_decision_full_path)) {
+    message(">> Loading target types from: ", type_decision_full_path)
+
+    type_decisions <- readxl::read_excel(type_decision_full_path) %>%
+      tibble::as_tibble() %>%
+      dplyr::transmute(
+        lake_table_name    = tolower(.data$table_name),
+        lake_variable_name = tolower(.data$variable),
+        target_type        = tolower(.data$final_type)
+      ) %>%
+      dplyr::distinct(lake_table_name, lake_variable_name, .keep_all = TRUE)
+
+    message(">> Loaded ", nrow(type_decisions), " type decisions.")
+
+    # Join target_type to the main schema
+    typed <- typed %>%
+      dplyr::left_join(
+        type_decisions,
+        by = c("lake_table_name", "lake_variable_name")
+      )
+
+    # Count variables without target_type mapping
+    n_missing_target <- sum(is.na(typed$target_type))
+    if (n_missing_target > 0) {
+      message(">> WARNING: ", n_missing_target, " variables have no target_type mapping.")
+    }
+  } else {
+    warning(">> type_decision_table.xlsx not found at: ", type_decision_full_path)
+    warning(">> Setting target_type = NA for all variables.")
+    typed <- typed %>%
+      dplyr::mutate(target_type = NA_character_)
+  }
+
   # =============================================================================
   # SECTION 6 — Hashes (type-stable, all fields cast to character)
   # =============================================================================
@@ -209,7 +264,8 @@ build_expected_schema_dictionary <- function(con,
       source_type_chr          = ifelse(is.na(source_type), "", source_type),
       source_table_name_chr    = ifelse(is.na(source_table_name), "", source_table_name),
       source_variable_name_chr = ifelse(is.na(source_variable_name), "", source_variable_name),
-      type_descriptor_chr      = ifelse(is.na(type_descriptor), "", type_descriptor)
+      type_descriptor_chr      = ifelse(is.na(type_descriptor), "", type_descriptor),
+      target_type_chr          = ifelse(is.na(target_type), "", target_type)
     )
   
   hashed <- hash_safe %>%
@@ -235,6 +291,7 @@ build_expected_schema_dictionary <- function(con,
           source_table_name_chr,
           source_variable_name_chr,
           type_descriptor_chr,
+          target_type_chr,
           sep = "|"
         ),
         algo = "sha256"
@@ -276,6 +333,7 @@ build_expected_schema_dictionary <- function(con,
       is_primary_key,
       ordinal_position,
       type_descriptor,
+      target_type,
       source_type,
       source_table_name,
       source_variable_name,
