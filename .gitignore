@@ -17,7 +17,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Data files — NEVER push raw data or Excel files to GitHub
+# Data files — NEVER push raw data to GitHub
 raw/
 staging/
 validated/
@@ -25,11 +25,15 @@ validated/
 *.xls
 *.csv
 
+# Allow reference files to be tracked
+!reference/*.xlsx
+!reference/*.csv
+!reference/archive/*.xlsx
+
 # Excel temp lock files
 ~$*
 
 # Outputs
-docs/SOP_rendered/
 qc_output/
 release_packages/
 

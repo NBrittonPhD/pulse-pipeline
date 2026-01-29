@@ -476,18 +476,18 @@ pulse-pipeline/
 ├── docs/                              # Step documentation and SOPs
 │   ├── step1/
 │   ├── step2/
-│   ├── step3/
-│   └── SOP_rendered/
+│   └── step3/
 │
 ├── reference/                         # Metadata dictionaries (local, not tracked in git)
+│   ├── CURRENT_core_metadata_dictionary.xlsx
 │   ├── expected_schema_dictionary.xlsx
-│   ├── core_metadata_dictionary.xlsx
 │   ├── ingest_dictionary.xlsx
 │   ├── type_decision_table.xlsx
 │   ├── decision_note_reference.xlsx
 │   ├── categorical_values.csv
 │   ├── categorical_values_consolidated.csv
-│   └── raw_ingest_profile.csv
+│   ├── raw_ingest_profile.csv
+│   └── archive/                      # Timestamped prior versions of core dictionary
 │
 ├── raw/                               # Raw data zone (not tracked in git)
 │   ├── cisir2026_toy/

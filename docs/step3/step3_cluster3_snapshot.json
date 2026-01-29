@@ -1,0 +1,80 @@
+{
+  "version": "step3_cluster3_snapshot_v1",
+  "description": "PULSE pipeline Step 3 × Cluster 3 (Schema Validation Engine) — code + structure snapshot.",
+  "schemas": {
+    "governance": "governance",
+    "raw": "raw",
+    "reference": "reference"
+  },
+  "db_objects": {
+    "tables": [
+      {
+        "name": "governance.structure_qc_table",
+        "purpose": "Schema validation issues. One row per issue detected during Step 3.",
+        "ddl_file": "sql/ddl/create_STRUCTURE_QC_TABLE.sql",
+        "key_columns": ["qc_id", "ingest_id", "source_id", "source_type", "lake_table_name", "lake_variable_name", "issue_code", "issue_type", "severity", "is_blocking", "expected_value", "observed_value", "check_run_at", "created_at", "created_by"]
+      },
+      {
+        "name": "reference.metadata",
+        "purpose": "Expected schema definitions. One row per variable per table per schema version.",
+        "ddl_file": "sql/ddl/create_METADATA.sql",
+        "key_columns": ["schema_version", "effective_from", "effective_to", "lake_table_name", "lake_variable_name", "data_type", "udt_name", "is_nullable", "is_required", "is_primary_key", "is_active", "synced_at", "created_at", "created_by"]
+      }
+    ]
+  },
+  "functions": [
+    {
+      "name": "validate_schema",
+      "file": "r/steps/validate_schema.R",
+      "category": "step_logic",
+      "description": "Step 3 orchestrator: load expected schema, compare all raw tables for an ingest batch, write issues to structure_qc_table.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbWriteTable", "compare_fields", "dplyr"],
+      "called_by": ["3_validate_schema.R", "tests"]
+    },
+    {
+      "name": "compare_fields",
+      "file": "r/utilities/compare_fields.R",
+      "category": "utility",
+      "description": "Compare expected vs observed schema for a single table. Detects missing columns, extra columns, type mismatches, PK mismatches, and column order drift.",
+      "calls": ["dplyr", "tibble"],
+      "called_by": ["validate_schema", "tests"]
+    },
+    {
+      "name": "sync_metadata",
+      "file": "r/reference/sync_metadata.R",
+      "category": "reference_loader",
+      "description": "Synchronize expected schema definitions from Excel into reference.metadata table.",
+      "calls": ["DBI::dbWriteTable", "DBI::dbExecute", "readxl::read_excel", "dplyr"],
+      "called_by": ["run_sync_metadata.R", "manual_use"]
+    }
+  ],
+  "scripts": [
+    {
+      "path": "r/scripts/3_validate_schema.R",
+      "purpose": "Human-friendly Step 3 entry: set ingest_id, call validate_schema(), print summary."
+    },
+    {
+      "path": "r/reference/run_sync_metadata.R",
+      "purpose": "User script to sync expected schema dictionary from Excel into reference.metadata."
+    }
+  ],
+  "reference_files": [
+    {
+      "path": "reference/expected_schema_dictionary.xlsx",
+      "purpose": "Governed Excel file defining expected schema for all lake tables."
+    }
+  ],
+  "tests": {
+    "unit": "tests/testthat/test_step3_schema_validation.R",
+    "status": "all_pass"
+  },
+  "step3_status": {
+    "ddl_created": true,
+    "functions_implemented": true,
+    "schema_comparison_working": true,
+    "issue_logging_working": true,
+    "halt_on_error_working": true,
+    "metadata_sync_working": true,
+    "unit_tests_pass": true
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "version": "step2_cluster2_snapshot_v1",
+  "description": "PULSE pipeline Step 2 × Cluster 2 (Batch Logging & File-Level Lineage) — code + structure snapshot.",
+  "schemas": {
+    "governance": "governance",
+    "raw": "raw",
+    "reference": "reference"
+  },
+  "db_objects": {
+    "tables": [
+      {
+        "name": "governance.batch_log",
+        "purpose": "Ingest-level summary log. One row per batch ingestion event.",
+        "ddl_file": "sql/ddl/create_BATCH_LOG.sql",
+        "key_columns": ["ingest_id", "source_id", "source_type", "file_count", "files_success", "files_error", "status", "batch_started_at_utc", "batch_completed_at_utc"]
+      },
+      {
+        "name": "governance.ingest_file_log",
+        "purpose": "File-level lineage. One row per file per batch, tracking status, row count, checksum.",
+        "ddl_file": "sql/ddl/create_INGEST_FILE_LOG.sql",
+        "key_columns": ["ingest_file_id", "ingest_id", "file_name", "file_path", "lake_table_name", "load_status", "row_count", "file_size_bytes", "checksum", "completed_at_utc"]
+      }
+    ],
+    "seed_data": [
+      {
+        "file": "sql/inserts/insert_PIPELINE_STEP_step2.sql",
+        "notes": "Seeds STEP_002 definition into governance.pipeline_step."
+      }
+    ]
+  },
+  "functions": [
+    {
+      "name": "log_batch_ingest",
+      "file": "r/steps/log_batch_ingest.R",
+      "category": "step_logic",
+      "description": "Step 2A: create batch_log row and pending ingest_file_log rows per file.",
+      "calls": ["DBI::dbExecute", "glue::glue", "fs::file_info", "readr::read_csv"],
+      "called_by": ["2_ingest_and_log_files.R", "tests"]
+    },
+    {
+      "name": "ingest_batch",
+      "file": "r/steps/log_batch_ingest.R",
+      "category": "step_logic",
+      "description": "Step 2B: loop over pending files, call ingest_one_file(), update lineage, finalize batch.",
+      "calls": ["DBI::dbExecute", "DBI::dbGetQuery", "ingest_one_file", "glue::glue"],
+      "called_by": ["2_ingest_and_log_files.R", "tests"]
+    },
+    {
+      "name": "ingest_one_file",
+      "file": "r/steps/ingest.R",
+      "category": "ingestion",
+      "description": "Strict type-enforced single-file ingestion into raw.<lake_table> with harmonization and metadata.",
+      "calls": ["get_ingest_dict", "vroom::vroom", "DBI::dbWriteTable", "digest::digest", "align_df_to_raw_table"],
+      "called_by": ["ingest_batch", "direct_testing"]
+    },
+    {
+      "name": "get_ingest_dict",
+      "file": "r/steps/ingest.R",
+      "category": "reference_loader",
+      "description": "Load reference.ingest_dictionary and normalize column names to lower case.",
+      "calls": ["DBI::dbReadTable", "DBI::Id"],
+      "called_by": ["ingest_one_file", "tests"]
+    },
+    {
+      "name": "align_df_to_raw_table",
+      "file": "r/steps/ingest.R",
+      "category": "utility",
+      "description": "Defensive table alignment: ensure data.frame columns match raw table structure before append.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbExecute", "DBI::dbWriteTable"],
+      "called_by": ["ingest_one_file"]
+    }
+  ],
+  "scripts": [
+    {
+      "path": "r/scripts/2_ingest_and_log_files.R",
+      "purpose": "Human-friendly Step 2 entry: derive ingest_id, list CSVs, call log_batch_ingest() and ingest_batch()."
+    }
+  ],
+  "tests": {
+    "unit": "tests/testthat/test_step2_batch_logging.R",
+    "status": "all_pass"
+  },
+  "step2_status": {
+    "ddl_created": true,
+    "functions_implemented": true,
+    "batch_logging_working": true,
+    "file_lineage_working": true,
+    "strict_type_enforcement_working": true,
+    "unit_tests_pass": true,
+    "runner_integration_complete": true
+  }
+}
