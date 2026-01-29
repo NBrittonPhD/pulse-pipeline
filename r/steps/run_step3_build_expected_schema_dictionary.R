@@ -33,7 +33,7 @@ library(readxl)
 # Resolve project root for portable paths
 proj_root <- getOption("pulse.proj_root", default = ".")
 
-source(file.path(proj_root, "r/utilities/scalar_helpers.R"))
+source(file.path(proj_root, "r/build_tools/scalar_helpers.R"))
 source(file.path(proj_root, "r/connect_to_pulse.R"))
 source(file.path(proj_root, "r/reference/build_expected_schema_dictionary.R"))
 

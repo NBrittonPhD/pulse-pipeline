@@ -54,8 +54,8 @@ A list containing:
 
 ## `ingest_one_file()`
 
-**File:** `r/action/ingest.R`  
-**Purpose:**  
+**File:** `r/steps/ingest.R`
+**Purpose:**
 Ingest a *single* CSV file using strict source typing and dictionary-based mapping.
 
 **Key Behaviors:**
@@ -80,7 +80,7 @@ list(status = "error", lake_table = NA, ...)
 ```
 
 ## infer_lake_table()
-**File:** r/action/ingest.R
+**File:** r/steps/ingest.R
 **Purpose:** 
 Determine which RAW table the file should map to.
 
@@ -90,7 +90,7 @@ Determine which RAW table the file should map to.
 - Support pattern rules (e.g., labs_YYYY → labs)
 
 ## get_ingest_dict()
-**File:** r/action/ingest.R
+**File:** r/steps/ingest.R
 **Purpose:**
 - Load reference.ingest_dictionary with consistent lowercase fields.
 

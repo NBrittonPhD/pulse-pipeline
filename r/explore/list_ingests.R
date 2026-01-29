@@ -6,7 +6,7 @@
 #   Useful for finding the ingest_id to use in Step 3 and beyond.
 #
 # Usage:
-#   source("r/utilities/list_ingests.R")
+#   source("r/explore/list_ingests.R")
 #   con <- connect_to_pulse()
 #   list_ingests(con)                        # Most recent 10
 #   list_ingests(con, n = 20)                # Most recent 20
@@ -58,12 +58,10 @@ list_ingests <- function(con,
             ingest_id,
             source_id,
             status,
-            files_total,
-            files_success,
-            created_at
+            files_success
         FROM governance.batch_log
         {where_sql}
-        ORDER BY created_at DESC
+        ORDER BY ingest_timestamp DESC
         LIMIT {n}
     ")
 

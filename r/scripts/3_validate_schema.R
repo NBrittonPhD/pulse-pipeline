@@ -34,12 +34,16 @@
 # USER INPUT SECTION — EDIT BELOW
 # =============================================================================
 
+
+#ING_cisir2026_toy_20260128_170418           
+#ING_clarity2026_toy_20260128_170320
+#ING_trauma_registry2026_toy_20260128_170308
 # 1. The ingest_id from Step 2 that you want to validate
 #    This must match an existing ingest_id in governance.batch_log
-ingest_id <- "ING_trauma_registry2026_toy_20260107_114716"   # EDIT ME
+ingest_id <- "ING_trauma_registry2026_toy_20260128_170308"   # EDIT ME
 
 # 2. Source type (for logging purposes; optional if derivable from batch_log)
-source_type <- "TRAUMA_REGISTRY"   # EDIT ME
+source_type <- "CISIR"   # EDIT ME
 
 # =============================================================================
 # END USER INPUT SECTION

@@ -83,7 +83,7 @@ flowchart TD
         %% Initialization + inputs
         T1 --> T2[pulse-init-all.R]
         T1 --> T3[Set USER INPUTS:\nsource_id,\nsource_type,\nraw_path,\ningest_id]
-        T1 --> T4[source(\"r/steps/log_batch_ingest.R\")\nsource(\"r/action/ingest.R\")]
+        T1 --> T4[source(\"r/steps/log_batch_ingest.R\")\nsource(\"r/steps/ingest.R\")]
 
         %% DB connection + file discovery
         T2 --> T5[connect_to_pulse()]

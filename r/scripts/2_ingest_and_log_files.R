@@ -29,10 +29,14 @@
 # ------------------------------
 
 # 1. Your source identifier (e.g., "cisir2026_test", "trauma_registry2026_test")
-source_id <- "trauma_registry2026_test"   # EDIT ME
+source_id <- "cisir2026_toy"   # EDIT ME
 
 # 2. Source type (MUST match allowed_source_types in pipeline_settings.yml)
-source_type <- "TRAUMA_REGISTRY"          # EDIT ME 
+source_type <- "CISIR"          # EDIT ME 
+
+# ------------------------------
+# END USER INPUT SECTION
+# ------------------------------
 
 # 3. Path to incoming files for this source (usually do not edit)
 raw_path <- glue::glue("raw/{source_id}/incoming")
@@ -41,10 +45,6 @@ raw_path <- glue::glue("raw/{source_id}/incoming")
 ts <- format(Sys.time(), "%Y%m%d_%H%M%S")
 ingest_id <- glue::glue("ING_{source_id}_{ts}")
 message(">> Using ingest_id = ", ingest_id)
-
-# ------------------------------
-# END USER INPUT SECTION
-# ------------------------------
 
 
 # ------------------------------
@@ -56,7 +56,7 @@ source("pulse-init-all.R")
 source("r/steps/log_batch_ingest.R")   # contains log_batch_ingest(), ingest_batch()
 
 # Load ingestion action logic
-source("r/action/ingest.R")            # contains ingest_one_file()
+source("r/steps/ingest.R")             # contains ingest_one_file()
 
 # Check raw directory
 if (!fs::dir_exists(raw_path)) {

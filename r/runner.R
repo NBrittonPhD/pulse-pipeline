@@ -9,6 +9,7 @@
 #   - Read pipeline configuration from governance.pipeline_step
 #   - Execute enabled steps in order
 #   - Special-case STEP_001 to call run_step1_register_source()
+#   - Special-case STEP_002 to call run_step2_batch_logging()
 # =============================================================================
 
 library(DBI)
@@ -52,12 +53,8 @@ invisible(lapply(utility_files, source))
 # Load global pipeline settings (schemas, vocab, etc.)
 # ---------------------------------------
 load_pipeline_settings <- function() {
-  # Use project root recorded by helper_pulse_step1, or fallback to getwd()
   proj_root <- getOption("pulse.proj_root", default = getwd())
-  
-  yaml::read_yaml(
-    file.path(proj_root, "config", "pipeline_settings.yml")
-  )
+  yaml::read_yaml(file.path(proj_root, "config", "pipeline_settings.yml"))
 }
 
 # ---------------------------------------
@@ -71,10 +68,7 @@ qualify_table <- function(schema, table) {
 # Fetch pipeline steps (schema-safe)
 # ---------------------------------------
 get_pipeline_steps <- function(con, settings) {
-  dbReadTable(
-    con,
-    qualify_table(settings$schemas$governance, "pipeline_step")
-  ) %>%
+  dbReadTable(con, qualify_table(settings$schemas$governance, "pipeline_step")) %>%
     dplyr::filter(enabled == TRUE) %>%
     dplyr::arrange(step_order)
 }
@@ -93,13 +87,26 @@ execute_step <- function(step, con, ingest_id = NULL, settings) {
   # ---------------------------------------------------------------------------
   if (step$step_id == "STEP_001") {
     
-    # Source parameters are loaded from config/source_params.yml
     source_params <- load_source_params()
     
     run_step1_register_source(
       con           = con,
       source_params = source_params,
       settings      = settings
+    )
+    
+    return(invisible(TRUE))
+  }
+  
+  # ---------------------------------------------------------------------------
+  # SPECIAL CASE: Step 2 (batch logging + ingestion)
+  # ---------------------------------------------------------------------------
+  if (step$step_id == "STEP_002") {
+    
+    run_step2_batch_logging(
+      con        = con,
+      ingest_id  = ingest_id,
+      settings   = settings
     )
     
     return(invisible(TRUE))
@@ -119,7 +126,7 @@ execute_step <- function(step, con, ingest_id = NULL, settings) {
   # ---------------------------------------------------------------------------
   if (step_type == "R") {
     
-    fn <- sub("\\(.*", "", step$code_snippet)  # strip any trailing "()" just in case
+    fn <- sub("\\(.*", "", step$code_snippet)
     
     do.call(
       fn,
@@ -137,6 +144,7 @@ execute_step <- function(step, con, ingest_id = NULL, settings) {
   # R Markdown step
   # ---------------------------------------------------------------------------
   if (step_type == "RMD") {
+    
     rmarkdown::render(
       input  = step$code_snippet,
       params = list(
@@ -145,6 +153,7 @@ execute_step <- function(step, con, ingest_id = NULL, settings) {
       ),
       output_dir = "docs/SOP_rendered/"
     )
+    
     return(invisible(TRUE))
   }
   
@@ -156,17 +165,13 @@ execute_step <- function(step, con, ingest_id = NULL, settings) {
 # ---------------------------------------
 run_pipeline <- function(ingest_id) {
   
-  # Open DB connection
   con <- connect_to_pulse()
   on.exit(DBI::dbDisconnect(con), add = TRUE)
   
-  # Load settings (schemas, vocab, etc.)
   settings <- load_pipeline_settings()
   
-  # Fetch enabled steps
   steps <- get_pipeline_steps(con, settings)
   
-  # Execute each step in order
   for (i in seq_len(nrow(steps))) {
     execute_step(
       step      = steps[i, ],

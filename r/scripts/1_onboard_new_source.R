@@ -27,18 +27,17 @@
 
 # A unique identifier for this onboarding run.
 # Convention: <source_id>_<time or test string>, e.g. "tr2026_test_01"
-ingest_id <- "trauma_registry2026_test_002"
+ingest_id <- "cisir2026_toy_260128"
 
 # Core metadata for the source you are onboarding.
 # Only edit the values on the right-hand side.
 source_params <- list(
   # Unique identifier for the source (stable, machine-readable). 
   # Should be the file name where the raw data resides.
-  # Keep short; lowercase; use letters, numbers, and underscores.
-  source_id = "trauma_registry2026_test",
+  source_id = "cisir2026_toy",
   
   # Human-readable name for the source.
-  source_name = "Example Source Attempt",
+  source_name = "CISIR toy Data",
   
   # System type of the upstream data source.
   # Must match allowed values in config/pipeline_settings.yml:

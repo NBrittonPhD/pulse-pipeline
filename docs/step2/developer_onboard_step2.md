@@ -42,7 +42,7 @@ Step 2 ensures reproducibility, auditability, and correct mapping between incomi
   - `log_batch_ingest()`
   - `ingest_batch()`
 
-- `r/action/ingest.R`  
+- `r/steps/ingest.R`
   Contains:
   - `ingest_one_file()`
   - `infer_lake_table()`
