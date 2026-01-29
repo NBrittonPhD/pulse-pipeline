@@ -474,11 +474,28 @@ pulse-pipeline/
 │       └── helper_pulse_step1.R
 │
 ├── docs/                              # Step documentation and SOPs
-│   ├── step1/
+│   ├── STYLE_GUIDE.md
+│   ├── function_dependency_table.md   # Cross-step function reference
+│   ├── step1/                         # Each step folder has 5 files:
+│   │   ├── step1_cluster1_snapshot.json
+│   │   ├── step1_developer_onboarding.md
+│   │   ├── step1_function_atlas.md
+│   │   ├── step1_governance.md
+│   │   └── step1_sop_summary.md
 │   ├── step2/
+│   │   ├── step2_cluster2_snapshot.json
+│   │   ├── step2_developer_onboarding.md
+│   │   ├── step2_function_atlas.md
+│   │   ├── step2_governance.md
+│   │   └── step2_sop_summary.md
 │   └── step3/
+│       ├── step3_cluster3_snapshot.json
+│       ├── step3_developer_onboarding.md
+│       ├── step3_function_atlas.md
+│       ├── step3_governance.md
+│       └── step3_sop_summary.md
 │
-├── reference/                         # Metadata dictionaries (local, not tracked in git)
+├── reference/                         # Governed metadata dictionaries (tracked in git)
 │   ├── CURRENT_core_metadata_dictionary.xlsx
 │   ├── expected_schema_dictionary.xlsx
 │   ├── ingest_dictionary.xlsx
@@ -597,7 +614,7 @@ Tests require a running PostgreSQL instance with the PULSE database bootstrapped
 The `.gitignore` prevents data files from being pushed to GitHub:
 
 - `raw/`, `staging/`, `validated/` directories
-- All `.xlsx`, `.xls`, and `.csv` files
+- All `.xlsx`, `.xls`, and `.csv` files **except** those in `reference/` and `reference/archive/`
 - Excel temp lock files (`~$*`)
 
-Reference data files in `reference/` are local-only and must be provisioned separately per environment.
+Governed metadata files in `reference/` (dictionaries, schema definitions, type decision tables) are tracked in git so they are versioned alongside the code that reads them.
