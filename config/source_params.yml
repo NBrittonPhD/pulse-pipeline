@@ -1,5 +1,5 @@
-source_id: trauma_registry2026_test
-source_name: Example Source Attempt
+source_id: cisir2026_toy
+source_name: CISIR toy Data
 system_type: CSV
 update_frequency: monthly
 data_owner: Data Owner Name

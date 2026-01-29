@@ -33,14 +33,19 @@
 
 library(DBI)
 library(dplyr)
-library(readxl)
 
 list_raw_tables <- function(con) {
-  
+
   # ---------------------------------------------------------------------------
-  # Load ingest dictionary (authoritative mapping: lake_table_name → source_type)
+  # Load ingest dictionary from database (authoritative mapping: lake_table_name → source_type)
   # ---------------------------------------------------------------------------
-  ingest_dict <- readxl::read_excel("ingest_dictionary.xlsx") %>%
+  ingest_dict <- DBI::dbReadTable(
+    con,
+    DBI::Id(schema = "reference", table = "ingest_dictionary")
+  )
+  names(ingest_dict) <- tolower(names(ingest_dict))
+
+  ingest_dict <- ingest_dict %>%
     dplyr::select(
       lake_table_name,
       source_type

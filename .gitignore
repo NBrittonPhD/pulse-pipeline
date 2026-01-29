@@ -17,6 +17,17 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Data files — NEVER push raw data or Excel files to GitHub
+raw/
+staging/
+validated/
+*.xlsx
+*.xls
+*.csv
+
+# Excel temp lock files
+~$*
+
 # Outputs
 docs/SOP_rendered/
 qc_output/
