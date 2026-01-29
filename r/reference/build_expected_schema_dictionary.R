@@ -21,7 +21,7 @@
 #   schema_version  e.g. "2025.0"
 #   effective_from  Date
 #   effective_to    Date or NA
-#   type_decision_path  Path to type_decision_table.xlsx (default: reference/type_decision_table.xlsx)
+#   type_decision_path  Path to type_decision_table.xlsx (default: reference/type_decisions/type_decision_table.xlsx)
 #
 # OUTPUTS
 #   Tibble with one row per expected variable
@@ -32,7 +32,7 @@ build_expected_schema_dictionary <- function(con,
                                              schema_version  = "2025.0",
                                              effective_from  = Sys.Date(),
                                              effective_to    = NA,
-                                             type_decision_path = "reference/type_decision_table.xlsx") {
+                                             type_decision_path = "reference/type_decisions/type_decision_table.xlsx") {
 
   # Required packages ----------------------------------------------------------
   required_pkgs <- c("DBI", "dplyr", "tibble", "digest", "stringr", "readxl")

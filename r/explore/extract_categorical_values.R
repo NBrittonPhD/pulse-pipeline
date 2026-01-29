@@ -335,7 +335,7 @@ consolidate_values <- function(results) {
 # Helper: Export to CSV
 # -----------------------------------------------------------------------------
 export_categorical_values <- function(results,
-                                      output_path = "reference/categorical_values.csv") {
+                                      output_path = "output/profiling/categorical_values.csv") {
 
   # Ensure directory exists
   dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)
@@ -402,7 +402,7 @@ print_categorical_summary <- function(results, max_width = 80) {
 # print_categorical_summary(results)
 #
 # # Export to CSV
-# export_categorical_values(results, "reference/categorical_values.csv")
+# export_categorical_values(results, "output/profiling/categorical_values.csv")
 #
 # # Get consolidated view (combine values from multiple tables per variable)
 # consolidated <- consolidate_values(results)

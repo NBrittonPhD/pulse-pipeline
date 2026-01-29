@@ -27,8 +27,11 @@ validated/
 
 # Allow reference files to be tracked
 !reference/*.xlsx
-!reference/*.csv
 !reference/archive/*.xlsx
+!reference/type_decisions/*.xlsx
+
+# Allow output profiling files to be tracked
+!output/profiling/*.csv
 
 # Excel temp lock files
 ~$*

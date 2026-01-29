@@ -9,8 +9,8 @@
 #
 # OUTPUT:
 #   - Console summary
-#   - CSV file: reference/categorical_values.csv
-#   - CSV file: reference/categorical_values_consolidated.csv
+#   - CSV file: output/profiling/categorical_values.csv
+#   - CSV file: output/profiling/categorical_values_consolidated.csv
 # =============================================================================
 
 # Set project root for relative paths
@@ -91,12 +91,12 @@ cat("\n")
 cat(">> Exporting results...\n")
 
 # Detailed results (one row per variable-table combination)
-output_detailed <- file.path(proj_root, "reference/categorical_values.csv")
+output_detailed <- file.path(proj_root, "output/profiling/categorical_values.csv")
 export_categorical_values(results, output_detailed)
 
 # Consolidated results (one row per variable, values combined)
 consolidated <- consolidate_values(results)
-output_consolidated <- file.path(proj_root, "reference/categorical_values_consolidated.csv")
+output_consolidated <- file.path(proj_root, "output/profiling/categorical_values_consolidated.csv")
 readr::write_csv(consolidated, output_consolidated)
 cat(">> Exported consolidated view to: ", output_consolidated, "\n")
 
