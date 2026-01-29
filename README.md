@@ -1,201 +1,603 @@
 # PULSE Pipeline
 
-A metadata-driven, automated data lake pipeline for PRIME-AI’s PULSE governance framework.
+A metadata-driven, automated data lake pipeline for PRIME-AI's PULSE governance framework.
 
-This repository contains:
-
-- SQL DDL for governance control tables  
-- R-based pipeline runner driven by metadata  
-- R functions implementing each pipeline stage  
-- R Markdown templates for automated SOP and QC packet generation  
-- YAML configurations for rules, settings, dashboards, and source metadata  
+Built in R and PostgreSQL, the pipeline ingests raw CSV data from multiple clinical sources, validates schemas against governed metadata definitions, and tracks every action through a comprehensive audit trail.
 
 ---
 
-# Architecture
+## Tech Stack
 
-The pipeline is fully metadata-driven and controlled by schemas in Postgres:
+| Component | Technology |
+|-----------|------------|
+| Database | PostgreSQL (schema-based architecture) |
+| Language | R |
+| Configuration | YAML |
+| Testing | testthat |
+| Version Control | Git / GitHub |
 
-- PIPELINE_STEP — ordered execution steps  
-- SOURCE_REGISTRY — registered data sources  
-- AUDIT_LOG — governed change log  
-- INGEST_DICTIONARY — harmonization rules  
-- BATCH_LOG + INGEST_FILE_LOG — ingest lineage  
-- METADATA + METADATA_HISTORY — global data dictionary  
-- RULE_LIBRARY, RULE_EXECUTION_LOG — QC governance  
+---
 
-## Flow Chart
+## Prerequisites
 
-```mermaid
-flowchart TD
+### Environment Variables
 
-    %% ============================================================
-    %% STEP 1 × CLUSTER 1 — SOURCE REGISTRATION
-    %% ============================================================
+The pipeline connects to PostgreSQL using four environment variables. Set them in your R session before running any step:
 
-    subgraph STEP1[Step 1 × Cluster 1 — Source Registration]
-        direction TB
-
-        S1A[User runs\nr/scripts/1_onboard_new_source.R]
-
-        %% Initialization
-        S1A --> S1B[pulse-init-all.R\n(Bootstrap env, schemas, tables)]
-        S1A --> S1C[source(\"pulse-launch.R\")]
-
-        %% High-level launcher
-        S1C --> S1D[pulse_launch(ingest_id,\nsource_params,\nauto_write_params = TRUE)]
-        S1D --> S1E[Write config/source_params.yml]
-        S1D --> S1F[run_pipeline(ingest_id)]
-
-        %% Runner
-        S1F --> S1G[connect_to_pulse()]
-        S1F --> S1H[load_pipeline_settings()]
-        S1F --> S1I[get_pipeline_steps()\n(governance.pipeline_step)]
-        S1F --> S1J[execute_step(STEP_001)]
-
-        %% Step 1 dispatch
-        S1J --> S1K[load_source_params()\n(from config/source_params.yml)]
-        S1K --> S1L[run_step1_register_source(con,\nsource_params, settings)]
-
-        %% Core Step 1 logic
-        S1L --> S1M[validate_source_entry()\n(vocab + required fields)]
-        S1L --> S1N[register_source()]
-
-        %% register_source() side effects
-        S1N --> S1O[INSERT/UPDATE\ngovernance.source_registry]
-        S1N --> S1P[create_source_folders()\n(raw/, staging/, validated/, governance/)]
-        S1N --> S1Q[write_audit_event()\n(event_type = \"source_registration\")]
-
-        %% Step definition / metadata
-        S1L --> S1R[write_pipeline_step()\n(record STEP_001 metadata)]
-    end
-
-
-    %% ============================================================
-    %% STEP 2 × CLUSTER 2 — BATCH LOGGING & FILE LINEAGE
-    %% ============================================================
-
-    subgraph STEP2[Step 2 × Cluster 2 — Batch Logging & File Lineage]
-        direction TB
-
-        T1[User runs\nr/scripts/2_ingest_and_log_files.R]
-
-        %% Initialization + inputs
-        T1 --> T2[pulse-init-all.R]
-        T1 --> T3[Set USER INPUTS:\nsource_id,\nsource_type,\nraw_path,\ningest_id]
-        T1 --> T4[source(\"r/steps/log_batch_ingest.R\")\nsource(\"r/steps/ingest.R\")]
-
-        %% DB connection + file discovery
-        T2 --> T5[connect_to_pulse()]
-        T3 --> T6[fs::dir_ls(raw/{source_id}/incoming,\n\"*.csv\")\n→ files[]]
-
-        %% Step 2A: batch + file logging
-        T5 --> T7[log_batch_ingest(\ncon, ingest_id,\nsource_id, source_type,\nfile_paths = files)]
-        T7 --> BATCH[governance.batch_log\n• one row per ingest_id]
-        T7 --> FILELOG[governance.ingest_file_log\n• one row per file\n(load_status = 'pending')]
-
-        %% Step 2B: ingest + lineage updates
-        T5 --> T8[ingest_batch(\ncon, ingest_id,\nraw_path,\nsource_id, source_type)]
-        T8 --> T9[Loop over\ningest_file_log rows\nfor this ingest_id]
-
-        %% Per-file ingestion
-        T9 --> T10[ingest_one_file(\ncon, file_path,\nsource_type)]
-        T10 --> T10A[Load reference.ingest_dictionary\n(filter by source_type)]
-        T10A --> T10B[Infer lake_table_name\n(from source_table_name,\noptionally lab_year)]
-        T10B --> RAW[Append harmonized data\ninto raw.<lake_table>]
-        T10B --> T10C[Return result list:\nstatus, lake_table,\nrow_count, file_size_bytes,\nchecksum]
-
-        %% Update file-level lineage
-        T10C --> T11[UPDATE governance.ingest_file_log\nSET lake_table_name,\nfile_size_bytes,\nrow_count,\nchecksum,\nload_status\n('success' or 'error'),\ncompleted_at_utc]
-
-        %% Finalize batch
-        T11 --> T12[Summarize\nfiles_success / files_error]
-        T12 --> T13[UPDATE governance.batch_log\nSET status\n('success'/'partial'/'error'),\nfiles_success,\nfiles_error,\nbatch_completed_at_utc]
-    end
+```r
+Sys.setenv(PULSE_DB   = "primeai_lake")
+Sys.setenv(PULSE_HOST = "localhost")
+Sys.setenv(PULSE_USER = "your_username")
+Sys.setenv(PULSE_PW   = "your_password")
 ```
 
----
+### R Packages
 
-# PULSE Pipeline — Step 1 × Cluster 1: Source Registration
+The pipeline depends on the following R packages:
 
-## Purpose
+```r
+install.packages(c(
+  "DBI", "RPostgres", "dplyr", "tibble", "glue",
+  "vroom", "readr", "readxl", "writexl", "digest",
+  "fs", "yaml", "jsonlite", "uuid", "stringr", "purrr"
+))
+```
 
-Step 1 establishes a new data source in the governed metadata ecosystem.  
-It ensures:
+### Database Bootstrap
 
-1. **Validation** of all source metadata against vocabularies in `pipeline_settings.yml`  
-2. **Registration** of the source in `governance.source_registry`  
-3. **Creation of standardized folder structures** (raw / staging / validated / governance)  
-4. **Audit logging** of source creation or updates  
-5. **Metadata-driven documentation** through `pipeline_step` records  
+Run the initialization script once per environment to create schemas and governance tables:
 
----
+```r
+source("pulse-init-all.R")
+```
 
-## Key Database Objects
-
-### `governance.source_registry`
-Stores all metadata defining a source.
-
-### `governance.audit_log`
-Captures governed events.
-
-### `directory_structure.yml`
-Defines canonical folder templates.
+This creates the `governance`, `reference`, `raw`, `staging`, and `validated` schemas and seeds the core governance tables (`source_registry`, `audit_log`, `pipeline_step`).
 
 ---
 
-## Key R Components (Step 1)
+## Quick Start
 
-- `validate_source_entry()`  
-- `create_source_folders()`  
-- `register_source()`  
-- `run_step1_register_source()`  
-- `1_onboard_new_source.R`  
+After setting environment variables and bootstrapping the database, run the pipeline in three steps:
+
+```r
+# Step 1: Register a new data source
+source("r/scripts/1_onboard_new_source.R")
+
+# Step 2: Ingest files and log batch lineage
+source("r/scripts/2_ingest_and_log_files.R")
+
+# Step 3: Validate raw table schemas against expected metadata
+source("r/scripts/3_validate_schema.R")
+```
+
+Each script has a **USER INPUT SECTION** at the top where you set parameters like `source_id`, `ingest_id`, and `source_type`.
 
 ---
 
-## How to Run Step 1
+## Architecture
+
+### Database Schemas
+
+The pipeline uses five PostgreSQL schemas:
+
+| Schema | Purpose |
+|--------|---------|
+| `governance` | Pipeline control, audit trail, batch lineage, QC issues |
+| `reference` | Expected schema definitions, ingest dictionaries, metadata |
+| `raw` | Landing zone for ingested data (one table per source file type) |
+| `staging` | Intermediate tables for transformation (future steps) |
+| `validated` | Final curated, validated tables (future steps) |
+
+### Governance Tables
+
+| Table | Purpose | Created By |
+|-------|---------|------------|
+| `governance.source_registry` | Registered data sources and their metadata | Step 1 |
+| `governance.audit_log` | Governed event trail (registrations, ingests, validations) | Step 1 |
+| `governance.pipeline_step` | Ordered step definitions for pipeline orchestration | Bootstrap |
+| `governance.batch_log` | One row per ingest batch (status, file counts, timestamps) | Step 2 |
+| `governance.ingest_file_log` | One row per ingested file (checksum, row count, load status) | Step 2 |
+| `governance.structure_qc_table` | Schema validation issues (missing/extra/mismatched fields) | Step 3 |
+
+### Reference Tables
+
+| Table | Purpose |
+|-------|---------|
+| `reference.metadata` | Expected schema definitions (synced from Excel dictionary) |
+| `reference.ingest_dictionary` | Source-to-lake column mapping and harmonization rules |
+
+### Raw Tables
+
+Raw tables are created dynamically during Step 2 ingestion. Each source file type maps to a lake table:
+
+```
+raw.cisir_encounter
+raw.cisir_vitals_minmax
+raw.clarity_lab_results_ustc
+raw.trauma_registry_demo_scores
+...
+```
+
+Table and column names are governed by `reference.ingest_dictionary`.
+
+---
+
+## Pipeline Steps
+
+### Step 1: Source Registration
+
+**Purpose:** Register a new data source in the governed metadata ecosystem. Validates source metadata against controlled vocabularies, creates the database record, builds the folder structure, and logs the event to the audit trail.
+
+**How to run:**
 
 ```r
 source("r/scripts/1_onboard_new_source.R")
 ```
 
-# Step 2 × Cluster 2: Batch Logging & File Lineage
+**Execution flow:**
 
-## Purpose
+```mermaid
+flowchart TD
+    A[User runs 1_onboard_new_source.R] --> B[pulse-init-all.R]
+    A --> C[pulse_launch]
+    C --> D[Write config/source_params.yml]
+    C --> E[run_pipeline]
+    E --> F[execute_step STEP_001]
+    F --> G[load_source_params]
+    G --> H[run_step1_register_source]
+    H --> I[validate_source_entry]
+    H --> J[register_source]
+    J --> K[(governance.source_registry)]
+    J --> L[create_source_folders]
+    J --> M[write_audit_event]
+    M --> N[(governance.audit_log)]
+    H --> O[write_pipeline_step]
+    O --> P[(governance.pipeline_step)]
+```
 
-Step 2 ingests raw files for a given source **with full lineage and strict type safety**.
+**Key files:**
 
-It does three main things:
+| File | Purpose |
+|------|---------|
+| `r/scripts/1_onboard_new_source.R` | User-facing wrapper script |
+| `r/steps/register_source.R` | Core registration logic |
+| `r/steps/run_step1_register_source.R` | Step orchestrator |
+| `r/utilities/validate_source_entry.R` | Validates source metadata against vocabularies |
+| `r/utilities/create_source_folders.R` | Creates raw/staging/validated directories |
+| `r/steps/write_audit_event.R` | Writes governed events to audit_log |
 
-1. Registers the ingest event  
-2. Tracks each file  
-3. Delegates ingestion to `ingest_one_file()`  
+**Database writes:**
+
+| Table | Action |
+|-------|--------|
+| `governance.source_registry` | INSERT or UPDATE source record |
+| `governance.audit_log` | INSERT source_registration event |
+| `governance.pipeline_step` | INSERT Step 1 execution record |
+
+**User inputs:**
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `source_id` | `cisir2026_toy` | Unique identifier for the data source |
+| `source_name` | `CISIR Toy Data` | Human-readable name |
+| `system_type` | `CSV` | One of: CSV, XLSX, SQL, API, FHIR, Other |
+| `update_frequency` | `monthly` | One of: daily, weekly, biweekly, monthly, quarterly, annually, ad_hoc |
+| `data_owner` | `Data Owner Name` | Responsible party |
+| `ingest_method` | `manual` | One of: push, pull, api, sftp, manual |
+| `pii_classification` | `PHI` | One of: PHI, Limited, NonPHI |
 
 ---
 
-## Key Database Objects
+### Step 2: Batch Logging and File Ingestion
 
-- `governance.batch_log`  
-- `governance.ingest_file_log`  
-- `reference.ingest_dictionary`  
-- `raw.<lake_table>`  
+**Purpose:** Ingest raw CSV files with full batch-level and file-level lineage. Logs the ingest event, tracks each file individually, reads CSV data using dictionary-based column mapping, and appends harmonized data to raw tables.
 
----
-
-## Key R Components (Step 2)
-
-- `ingest_one_file()`  
-- `log_batch_ingest()`  
-- `ingest_batch()`  
-- `2_ingest_and_log_files.R`  
-
----
-
-## How to Run Step 2
+**How to run:**
 
 ```r
 source("r/scripts/2_ingest_and_log_files.R")
 ```
 
+**Execution flow:**
+
+```mermaid
+flowchart TD
+    A[User runs 2_ingest_and_log_files.R] --> B[pulse-init-all.R]
+    A --> C[Set USER INPUTS]
+    B --> D[connect_to_pulse]
+    C --> E[Discover CSV files in raw/source_id/incoming]
+
+    E --> F[log_batch_ingest]
+    F --> G[(governance.batch_log)]
+    F --> H[(governance.ingest_file_log: pending)]
+
+    D --> I[ingest_batch]
+    I --> J[Loop over pending files]
+    J --> K[ingest_one_file]
+
+    K --> L[Load reference.ingest_dictionary]
+    L --> M[Infer lake_table_name]
+    M --> N[Read CSV + harmonize columns]
+    N --> O[(raw.lake_table: append)]
+    K --> P[Return status + metadata]
+
+    P --> Q[UPDATE ingest_file_log]
+    Q --> R[Finalize batch_log status]
+```
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `r/scripts/2_ingest_and_log_files.R` | User-facing wrapper script |
+| `r/steps/log_batch_ingest.R` | Batch logging + `ingest_batch()` orchestrator |
+| `r/steps/ingest.R` | Single-file ingestion engine (`ingest_one_file()`) |
+| `r/steps/run_step2_batch_logging.R` | Programmatic step wrapper |
+| `r/utilities/normalize_names.R` | Column name normalization |
+
+**Database writes:**
+
+| Table | Action |
+|-------|--------|
+| `governance.batch_log` | INSERT batch record, UPDATE with final status |
+| `governance.ingest_file_log` | INSERT one row per file (pending), UPDATE with results |
+| `raw.<lake_table>` | CREATE table if needed, APPEND ingested data |
+
+**File-level lineage tracked per file:**
+
+| Field | Description |
+|-------|-------------|
+| `file_name` | Original CSV filename |
+| `lake_table_name` | Target raw table |
+| `row_count` | Rows ingested |
+| `file_size_bytes` | File size |
+| `checksum` | MD5 hash for deduplication |
+| `load_status` | `success`, `error`, or `pending` |
+
+**User inputs:**
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `source_id` | `cisir2026_toy` | Must match a registered source from Step 1 |
+| `ingest_id` | `ING_cisir2026_toy_20260128_170000` | Unique batch identifier |
+
+The `source_type` is derived automatically from `reference.ingest_dictionary` by matching incoming filenames against `source_table_name` entries.
+
 ---
+
+### Step 3: Schema Validation Engine
+
+**Purpose:** Validate raw table schemas against expected metadata definitions before harmonization begins. Identifies missing columns, unexpected columns, type mismatches, primary key discrepancies, and column order drift. Writes all issues to a governed QC table.
+
+**How to run:**
+
+```r
+source("r/scripts/3_validate_schema.R")
+```
+
+**Execution flow:**
+
+```mermaid
+flowchart TD
+    A[User runs 3_validate_schema.R] --> B[pulse-init-all.R]
+    A --> C[Set USER INPUTS]
+    B --> D[connect_to_pulse]
+
+    C --> E{sync_metadata_first?}
+    E -->|Yes| F[sync_metadata: Excel to DB]
+    F --> G[(reference.metadata)]
+    E -->|No| H[Skip sync]
+
+    D --> I[validate_schema]
+    I --> J[Verify ingest_id in batch_log]
+    J --> K[Load expected schema from reference.metadata]
+    K --> L[Get raw tables from ingest_file_log]
+
+    L --> M[For each raw table]
+    M --> N[Query observed columns from information_schema]
+    N --> O[compare_fields: expected vs observed]
+
+    O --> P{Issues found?}
+    P -->|Yes| Q[(governance.structure_qc_table)]
+    P -->|No| R[Table passes validation]
+
+    Q --> S{Critical issues + halt_on_error?}
+    S -->|Yes| T[STOP: execution halted]
+    S -->|No| U[Continue to next table]
+
+    U --> V[Print summary report]
+    R --> V
+```
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `r/scripts/3_validate_schema.R` | User-facing wrapper script |
+| `r/steps/validate_schema.R` | Core validation logic |
+| `r/utilities/compare_fields.R` | Pure comparison function (detects 6 issue types) |
+| `r/reference/sync_metadata.R` | Syncs expected schema from Excel to database |
+| `r/reference/build_expected_schema_dictionary.R` | Builds schema dictionary from Postgres metadata |
+| `r/steps/run_step3_build_expected_schema_dictionary.R` | Schema builder wrapper |
+| `sql/ddl/create_STRUCTURE_QC_TABLE.sql` | DDL for the QC issues table |
+
+**Database reads:**
+
+| Table | Purpose |
+|-------|---------|
+| `governance.batch_log` | Verify ingest_id exists, derive source_id |
+| `governance.ingest_file_log` | Identify which raw tables to validate |
+| `reference.metadata` | Expected schema definitions (columns, types, requirements) |
+| `information_schema.columns` | Actual Postgres column metadata for raw tables |
+
+**Database writes:**
+
+| Table | Action |
+|-------|--------|
+| `governance.structure_qc_table` | INSERT one row per issue found (append-only) |
+
+**Issue types detected by `compare_fields()`:**
+
+| Issue Code | Severity | Description |
+|------------|----------|-------------|
+| `SCHEMA_MISSING_COLUMN` | critical | Required column absent from raw table |
+| `SCHEMA_UNEXPECTED_COLUMN` | critical | Column exists in raw but not in expected schema |
+| `SCHEMA_TYPE_MISMATCH` | warning | Data type differs between expected and observed |
+| `SCHEMA_PK_MISMATCH` | critical | Primary key flag differs |
+| `SCHEMA_COLUMN_ORDER_DRIFT` | info | Column ordinal position differs |
+| `TYPE_TARGET_MISMATCH` | warning | Observed type does not match target staging type |
+| `TYPE_TARGET_MISSING` | warning | No target type defined in type_decision_table |
+
+**Severity levels:**
+
+| Severity | Behavior |
+|----------|----------|
+| `critical` | Blocks execution if `halt_on_error = TRUE` |
+| `warning` | Logged but does not block |
+| `info` | Informational only |
+
+**User inputs:**
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `ingest_id` | `ING_cisir2026_toy_20260128_170000` | Must match an existing batch from Step 2 |
+| `source_type` | `CISIR` | For logging purposes |
+| `halt_on_error` | `TRUE` | Stop execution on critical issues |
+| `sync_metadata_first` | `FALSE` | Re-sync Excel dictionary to database before validating |
+
+**Reviewing issues after validation:**
+
+```sql
+SELECT * FROM governance.structure_qc_table
+WHERE ingest_id = 'ING_cisir2026_toy_20260128_170000'
+ORDER BY severity DESC, lake_table_name, lake_variable_name;
+```
+
+---
+
+## Directory Structure
+
+```
+pulse-pipeline/
+│
+├── config/
+│   ├── pipeline_settings.yml          # Controlled vocabularies, schema list, defaults
+│   └── source_params.yml              # Current source parameters (written at runtime)
+│
+├── r/
+│   ├── connect_to_pulse.R             # DB connection wrapper (reads env vars)
+│   ├── runner.R                       # Pipeline orchestrator (step dispatch)
+│   │
+│   ├── scripts/                       # User-facing wrapper scripts
+│   │   ├── 1_onboard_new_source.R
+│   │   ├── 2_ingest_and_log_files.R
+│   │   └── 3_validate_schema.R
+│   │
+│   ├── steps/                         # Core step functions
+│   │   ├── register_source.R
+│   │   ├── run_step1_register_source.R
+│   │   ├── log_batch_ingest.R
+│   │   ├── ingest.R
+│   │   ├── run_step2_batch_logging.R
+│   │   ├── validate_schema.R
+│   │   ├── run_step3_build_expected_schema_dictionary.R
+│   │   └── write_audit_event.R
+│   │
+│   ├── utilities/                     # Reusable helper functions
+│   │   ├── compare_fields.R
+│   │   ├── create_source_folders.R
+│   │   ├── load_source_params.R
+│   │   ├── normalize_names.R
+│   │   ├── validate_source_entry.R
+│   │   └── write_pipeline_step.R
+│   │
+│   ├── reference/                     # Metadata management
+│   │   ├── build_expected_schema_dictionary.R
+│   │   ├── sync_metadata.R
+│   │   └── run_sync_metadata.R
+│   │
+│   ├── build_tools/                   # Development and maintenance utilities
+│   │   ├── clear_all_governance_logs.R
+│   │   ├── clear_ingest_logs.R
+│   │   ├── clear_batch_logs.R
+│   │   ├── drop_all_tables_in_raw_schema.R
+│   │   ├── coerce_types.R
+│   │   ├── create_raw_table_from_schema.R
+│   │   ├── read_csv_strict.R
+│   │   └── scalar_helpers.R
+│   │
+│   ├── explore/                       # Read-only inspection tools
+│   │   ├── explore_source_registry.R
+│   │   ├── explore_audit_log.R
+│   │   ├── explore_batch_log.R
+│   │   ├── explore_ingest_file_log.R
+│   │   ├── explore_pipeline_steps.R
+│   │   ├── explore_structure_qc.R
+│   │   ├── explore_metadata.R
+│   │   ├── explore_ingest_dictionary.R
+│   │   ├── list_raw_tables.R
+│   │   ├── list_ingests.R
+│   │   ├── profile_data.R
+│   │   ├── extract_categorical_values.R
+│   │   └── run_extract_categorical_values.R
+│   │
+│   └── prep/                          # Test data generation
+│       ├── make_toy_raw_extracts.R
+│       └── bulk_deidentify_toy_files.R
+│
+├── sql/
+│   ├── ddl/                           # Table creation scripts
+│   │   ├── create_SCHEMAS.sql
+│   │   ├── create_SOURCE_REGISTRY.sql
+│   │   ├── create_AUDIT_LOG.sql
+│   │   ├── create_PIPELINE_STEP.sql
+│   │   ├── create_BATCH_LOG.sql
+│   │   ├── create_INGEST_FILE_LOG.sql
+│   │   ├── create_INGEST_FILE_LOG_index_1.sql
+│   │   ├── create_INGEST_FILE_LOG_index_2.sql
+│   │   ├── create_METADATA.sql
+│   │   ├── create_STRUCTURE_QC_TABLE.sql
+│   │   └── create_RULE_LIBRARY.sql
+│   │
+│   └── inserts/                       # Seed data
+│       ├── insert_RULE_LIBRARY.sql
+│       └── pipeline_steps/
+│           ├── STEP_001_register_source.sql
+│           └── STEP_002_batch_logging_and_ingestion.sql
+│
+├── tests/
+│   └── testthat/
+│       ├── test_step1_register_source.R
+│       ├── test_step1_integration.R
+│       ├── test_step2_batch_logging.R
+│       ├── test_step3_schema_validation.R
+│       └── helper_pulse_step1.R
+│
+├── docs/                              # Step documentation and SOPs
+│   ├── step1/
+│   ├── step2/
+│   ├── step3/
+│   └── SOP_rendered/
+│
+├── reference/                         # Metadata dictionaries (local, not tracked in git)
+│   ├── expected_schema_dictionary.xlsx
+│   ├── core_metadata_dictionary.xlsx
+│   ├── ingest_dictionary.xlsx
+│   ├── type_decision_table.xlsx
+│   ├── decision_note_reference.xlsx
+│   ├── categorical_values.csv
+│   ├── categorical_values_consolidated.csv
+│   └── raw_ingest_profile.csv
+│
+├── raw/                               # Raw data zone (not tracked in git)
+│   ├── cisir2026_toy/
+│   ├── clarity2026_toy/
+│   └── trauma_registry2026_toy/
+│
+├── staging/                           # Staging zone (not tracked in git)
+├── validated/                         # Validated zone (not tracked in git)
+│
+├── pulse-init-all.R                   # Database bootstrap script
+├── pulse-launch.R                     # High-level pipeline launcher
+├── directory_structure.yml            # Folder template for new sources
+└── CLAUDE.md                          # Build specifications
+```
+
+---
+
+## Configuration
+
+### pipeline_settings.yml
+
+Located at `config/pipeline_settings.yml`. Defines controlled vocabularies used to validate source metadata during Step 1:
+
+| Vocabulary | Allowed Values |
+|------------|----------------|
+| `system_type` | CSV, XLSX, SQL, API, FHIR, Other |
+| `update_frequency` | daily, weekly, biweekly, monthly, quarterly, annually, ad_hoc |
+| `ingest_method` | push, pull, api, sftp, manual |
+| `pii_classification` | PHI, Limited, NonPHI |
+| `source_types` | TRAUMA_REGISTRY, CISIR, CLARITY, EMEDS |
+
+Also defines required source fields and default values.
+
+### source_params.yml
+
+Located at `config/source_params.yml`. Written automatically by `pulse_launch()` during Step 1. Contains the current source's registration parameters (source_id, source_name, system_type, etc.).
+
+### directory_structure.yml
+
+Located at the project root. Template used by `create_source_folders()` to build the folder structure for each new source:
+
+```yaml
+raw:
+  - "{source_id}/incoming/"
+  - "{source_id}/archive/"
+staging:
+  - "{source_id}/incoming/"
+  - "{source_id}/archive/"
+validated:
+  - "{source_id}/"
+```
+
+---
+
+## Development Tools
+
+### Build Tools (`r/build_tools/`)
+
+Destructive maintenance utilities for resetting pipeline state during development:
+
+| Function | Purpose |
+|----------|---------|
+| `clear_all_governance_logs()` | TRUNCATE all 6 governance tables (FK-safe order) |
+| `clear_ingest_logs()` | TRUNCATE ingest_file_log and batch_log only |
+| `clear_batch_logs()` | TRUNCATE batch_log only |
+| `drop_all_tables_in_raw_schema()` | DROP all tables in the raw schema |
+
+### Explore Tools (`r/explore/`)
+
+Read-only inspection functions for querying governance and reference tables:
+
+| Function | Purpose |
+|----------|---------|
+| `explore_source_registry(con)` | Browse registered sources |
+| `explore_audit_log(con)` | View audit events with filtering |
+| `explore_batch_log(con)` | View ingest batches and status |
+| `explore_ingest_file_log(con)` | View file-level lineage |
+| `explore_pipeline_steps(con)` | View pipeline step definitions |
+| `explore_structure_qc(con)` | Browse schema validation issues |
+| `explore_metadata(con)` | View expected schema definitions |
+| `explore_ingest_dictionary(con)` | View column harmonization rules |
+| `list_raw_tables(con)` | List all raw.* tables with source mapping |
+| `list_ingests(con)` | List all ingests with status summary |
+
+---
+
+## Testing
+
+Unit tests are in `tests/testthat/`. Run them with:
+
+```r
+# Run all tests
+testthat::test_dir("tests/testthat/")
+
+# Run tests for a specific step
+testthat::test_file("tests/testthat/test_step1_register_source.R")
+testthat::test_file("tests/testthat/test_step2_batch_logging.R")
+testthat::test_file("tests/testthat/test_step3_schema_validation.R")
+```
+
+Tests require a running PostgreSQL instance with the PULSE database bootstrapped.
+
+---
+
+## Data Protection
+
+The `.gitignore` prevents data files from being pushed to GitHub:
+
+- `raw/`, `staging/`, `validated/` directories
+- All `.xlsx`, `.xls`, and `.csv` files
+- Excel temp lock files (`~$*`)
+
+Reference data files in `reference/` are local-only and must be provisioned separately per environment.
