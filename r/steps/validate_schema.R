@@ -40,13 +40,13 @@
 # Dependencies:
 #   - DBI, dplyr, glue, tibble
 #   - r/utilities/compare_fields.R
-#   - reference.metadata table (synced from expected_schema_dictionary.xlsx)
+#   - reference.metadata table (synced from CURRENT_core_metadata_dictionary.xlsx)
 #   - governance.structure_qc_table
 #   - governance.batch_log
 #   - governance.ingest_file_log
 #
 # Author: Noel
-# Last Updated: 2026-01-07
+# Last Updated: 2026-01-30
 # =============================================================================
 
 # =============================================================================
@@ -120,15 +120,12 @@ validate_schema <- function(con,
 
     expected_schema <- dbGetQuery(con, "
         SELECT
-            schema_version,
+            version_number,
             lake_table_name,
             lake_variable_name,
+            source_type,
             data_type,
-            udt_name,
-            COALESCE(is_nullable, TRUE) as is_nullable,
             COALESCE(is_required, FALSE) as is_required,
-            COALESCE(is_primary_key, FALSE) as is_primary_key,
-            ordinal_position,
             target_type
         FROM reference.metadata
         WHERE is_active = TRUE
@@ -138,9 +135,60 @@ validate_schema <- function(con,
         stop("[validate_schema] ERROR: No active metadata found in reference.metadata. Run sync_metadata() first.")
     }
 
-    schema_version <- unique(expected_schema$schema_version)[1]
+    # Derive schema_version from version_number (cast to character for
+    # governance.structure_qc_table compatibility)
+    schema_version <- as.character(unique(expected_schema$version_number)[1])
     message(glue("[validate_schema] Loaded {nrow(expected_schema)} expected field definitions."))
     message(glue("[validate_schema] Schema version: {schema_version}"))
+
+    # =========================================================================
+    # DERIVE SOURCE_TYPE IF NOT PROVIDED
+    # =========================================================================
+    # source_type is needed to filter expected_schema to the correct source's
+    # variables. Derive by matching the ingest's lake tables against the
+    # source_type values present in reference.metadata.
+    # =========================================================================
+    if (is.null(source_type)) {
+        source_type_row <- dbGetQuery(con, glue("
+            SELECT DISTINCT m.source_type
+            FROM reference.metadata m
+            JOIN governance.ingest_file_log f
+              ON m.lake_table_name = f.lake_table_name
+            WHERE f.ingest_id = '{ingest_id}'
+              AND f.load_status = 'success'
+              AND m.is_active = TRUE
+            LIMIT 1
+        "))
+
+        if (nrow(source_type_row) > 0 && !is.na(source_type_row$source_type[1])) {
+            source_type <- source_type_row$source_type[1]
+            message(glue("[validate_schema] Derived source_type from metadata: {source_type}"))
+        } else {
+            stop(glue(
+                "[validate_schema] ERROR: Could not derive source_type for ingest '{ingest_id}'. ",
+                "Pass source_type explicitly."
+            ))
+        }
+    }
+
+    # =========================================================================
+    # FILTER EXPECTED SCHEMA BY SOURCE_TYPE
+    # =========================================================================
+    # The metadata dictionary is keyed by (lake_table_name, lake_variable_name,
+    # source_type). We filter to only the variables relevant to this ingest's
+    # source_type so that cross-source variables do not cause false positives.
+    # =========================================================================
+    expected_schema <- expected_schema %>%
+        filter(toupper(source_type) == toupper(!!source_type))
+
+    if (nrow(expected_schema) == 0) {
+        stop(glue(
+            "[validate_schema] ERROR: No active metadata found for source_type '{source_type}'. ",
+            "Run sync_metadata() first."
+        ))
+    }
+
+    message(glue("[validate_schema] Filtered to {nrow(expected_schema)} expected fields for source_type '{source_type}'."))
 
     # =========================================================================
     # IDENTIFY RAW TABLES FOR THIS INGEST
@@ -199,10 +247,7 @@ validate_schema <- function(con,
                 '{table_name}' as lake_table_name,
                 column_name as lake_variable_name,
                 data_type,
-                udt_name,
-                CASE WHEN is_nullable = 'YES' THEN TRUE ELSE FALSE END as is_nullable,
-                FALSE as is_primary_key,
-                ordinal_position
+                udt_name
             FROM information_schema.columns
             WHERE table_schema = 'raw'
               AND table_name = '{table_name}'

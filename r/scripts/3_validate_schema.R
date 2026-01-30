@@ -14,7 +14,7 @@
 #
 # This will:
 #   - Connect to Postgres
-#   - Optionally sync metadata from expected_schema_dictionary.xlsx
+#   - Optionally sync metadata from CURRENT_core_metadata_dictionary.xlsx
 #   - Load expected schema from reference.metadata
 #   - Identify raw tables from the specified ingest batch
 #   - Compare each table against expected schema
@@ -63,7 +63,7 @@ source_type <- "CISIR"   # EDIT ME
 halt_on_error <- FALSE
 
 # Sync metadata before validation?
-#   TRUE  = Re-sync reference.metadata from expected_schema_dictionary.xlsx
+#   TRUE  = Re-sync reference.metadata from CURRENT_core_metadata_dictionary.xlsx
 #   FALSE = Use existing reference.metadata (faster if already synced)
 sync_metadata_first <- FALSE
 
@@ -88,9 +88,9 @@ con <- connect_to_pulse()
 # OPTIONAL: SYNC METADATA FROM EXCEL
 # =============================================================================
 if (sync_metadata_first) {
-    message("[Step 3] Syncing metadata from expected_schema_dictionary.xlsx...")
+    message("[Step 3] Syncing metadata from CURRENT_core_metadata_dictionary.xlsx...")
     source("r/reference/sync_metadata.R")
-    sync_result <- sync_metadata(con, mode = "replace")
+    sync_result <- sync_metadata(con, dict_path = "reference/CURRENT_core_metadata_dictionary.xlsx")
     message(glue::glue("[Step 3] Synced {sync_result$rows_synced} metadata rows."))
 }
 
@@ -173,7 +173,7 @@ DBI::dbDisconnect(con)
 message("[Step 3] Step 3 execution complete.")
 
 if (result$success) {
-    message("[Step 3] You may now proceed to data profiling (Step 4).")
+    message("[Step 3] You may now proceed to data profiling (Step 5).")
 } else {
-    message("[Step 3] Address schema issues before proceeding to Step 4.")
+    message("[Step 3] Address schema issues before proceeding to Step 5.")
 }

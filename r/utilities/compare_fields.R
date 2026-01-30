@@ -16,34 +16,28 @@
 #   expected_schema (tibble/data.frame)
 #     • One row per expected column for a single lake_table_name.
 #     • Required columns:
-#         - lake_table_name   (chr)
+#         - lake_table_name    (chr)
 #         - lake_variable_name (chr)
-#         - data_type          (chr)  # logical Postgres type, e.g. "integer"
-#         - udt_name           (chr)  # underlying type, e.g. "int4"
-#         - is_nullable        (lgl)  # TRUE if column allowed to be NULL
+#         - data_type          (chr)  # logical Postgres type, e.g. "text"
 #         - is_required        (lgl)  # TRUE if column must exist in table
-#         - is_primary_key     (lgl)  # TRUE if part of PK
-#         - ordinal_position   (int)  # expected position/order in table
-#         - schema_version     (chr)  # version tag for expected schema
 #         - target_type        (chr)  # desired SQL type for staging (from type_decision_table)
+#     • Optional columns:
+#         - version_number     (int)  # version tag for expected schema
 #
 #   observed_schema (tibble/data.frame)
 #     • One row per observed column in raw.<lake_table_name>.
-#     • Recommended columns:
+#     • Required columns:
 #         - lake_table_name    (chr)
 #         - lake_variable_name (chr)
 #         - data_type          (chr)
 #         - udt_name           (chr)
-#         - is_nullable        (lgl)
-#         - is_primary_key     (lgl)
-#         - ordinal_position   (int)
 #
 #   lake_table_name (character scalar)
 #     • Name of the lake table being validated, e.g. "cisir_labs_wth_grp".
 #
 #   schema_version (character scalar, optional)
 #     • Version of the expected schema used for this comparison.
-#     • If NULL, will be derived from expected_schema$schema_version (unique).
+#     • If NULL, will be derived from expected_schema$version_number (unique).
 #
 # Outputs:
 #   A named list with:
@@ -73,7 +67,7 @@
 #   Noel + PULSE Pipeline (with assist from ChatGPT)
 #
 # Revision date:
-#   2025-12-11
+#   2026-01-30
 # =============================================================================
 
 compare_fields <- function(expected_schema,
@@ -99,12 +93,7 @@ compare_fields <- function(expected_schema,
     "lake_table_name",
     "lake_variable_name",
     "data_type",
-    "udt_name",
-    "is_nullable",
     "is_required",
-    "is_primary_key",
-    "ordinal_position",
-    "schema_version",
     "target_type"
   )
   
@@ -116,15 +105,12 @@ compare_fields <- function(expected_schema,
     )
   }
   
-  # For observed schema we require a slightly smaller set of fields.
+  # For observed schema we require the identity columns plus type info.
   required_observed_cols <- c(
     "lake_table_name",
     "lake_variable_name",
     "data_type",
-    "udt_name",
-    "is_nullable",
-    "is_primary_key",
-    "ordinal_position"
+    "udt_name"
   )
   
   missing_observed_cols <- setdiff(required_observed_cols, names(observed_schema))
@@ -147,15 +133,19 @@ compare_fields <- function(expected_schema,
   observed_tbl <- observed_schema |>
     dplyr::filter(.data$lake_table_name == !!lake_table_name)
   
-  # Derive schema_version if not supplied explicitly. We expect a unique
-  # schema_version within the expected schema for this table.
+  # Derive schema_version if not supplied explicitly. We look for
+  # version_number in the expected schema and cast to character.
   if (is.null(schema_version)) {
-    schema_version_values <- expected_tbl |>
-      dplyr::distinct(.data$schema_version) |>
-      dplyr::pull(.data$schema_version)
-    
-    if (length(schema_version_values) == 1L) {
-      schema_version <- schema_version_values[[1L]]
+    if ("version_number" %in% names(expected_tbl)) {
+      version_values <- expected_tbl |>
+        dplyr::distinct(.data$version_number) |>
+        dplyr::pull(.data$version_number)
+
+      if (length(version_values) == 1L) {
+        schema_version <- as.character(version_values[[1L]])
+      } else {
+        schema_version <- NA_character_
+      }
     } else {
       schema_version <- NA_character_
     }
@@ -220,8 +210,7 @@ compare_fields <- function(expected_schema,
         is_blocking  = TRUE,
         expected_value = paste0(
           "Required column '", row$lake_variable_name,
-          "' must exist with type ", row$data_type,
-          " (", row$udt_name, ")"
+          "' must exist with type ", row$data_type
         ),
         observed_value = "Column not present in observed schema",
         check_context  = "variable_level"
@@ -267,36 +256,36 @@ compare_fields <- function(expected_schema,
   # 3. Type mismatches for columns present in both schemas
   # ----------------------------------------------------------------------------
   # For variables present in both expected and observed schemas, we compare
-  # data_type and udt_name. Mismatches are treated as warnings by default,
-  # since they may be recoverable via harmonization casting.
+  # data_type. The expected schema (from the dictionary) has data_type only;
+  # the observed schema has both data_type and udt_name from Postgres.
+  # Mismatches are treated as warnings, since they may be recoverable via
+  # harmonization casting.
   # ----------------------------------------------------------------------------
   common_names <- intersect(expected_names, observed_names)
-  
+
   if (length(common_names) > 0L) {
     expected_common <- expected_tbl |>
       dplyr::filter(.data$lake_variable_name %in% common_names) |>
       dplyr::select(
         .data$lake_variable_name,
-        expected_data_type  = .data$data_type,
-        expected_udt_name   = .data$udt_name
+        expected_data_type = .data$data_type
       )
-    
+
     observed_common <- observed_tbl |>
       dplyr::filter(.data$lake_variable_name %in% common_names) |>
       dplyr::select(
         .data$lake_variable_name,
-        observed_data_type  = .data$data_type,
-        observed_udt_name   = .data$udt_name
+        observed_data_type = .data$data_type,
+        observed_udt_name  = .data$udt_name
       )
-    
+
     type_compare <- expected_common |>
       dplyr::left_join(observed_common, by = "lake_variable_name") |>
       dplyr::mutate(
-        type_mismatch = (.data$expected_data_type != .data$observed_data_type) |
-          (.data$expected_udt_name  != .data$observed_udt_name)
+        type_mismatch = (.data$expected_data_type != .data$observed_data_type)
       ) |>
       dplyr::filter(.data$type_mismatch)
-    
+
     if (nrow(type_compare) > 0) {
       for (i in seq_len(nrow(type_compare))) {
         row <- type_compare[i, ]
@@ -307,9 +296,7 @@ compare_fields <- function(expected_schema,
           issue_group  = "dtype",
           severity     = "warning",
           is_blocking  = FALSE,
-          expected_value = paste0(
-            row$expected_data_type, " (", row$expected_udt_name, ")"
-          ),
+          expected_value = row$expected_data_type,
           observed_value = paste0(
             row$observed_data_type, " (", row$observed_udt_name, ")"
           ),
@@ -319,93 +306,6 @@ compare_fields <- function(expected_schema,
     }
   }
   
-  # ----------------------------------------------------------------------------
-  # 4. Primary key mismatches
-  # ----------------------------------------------------------------------------
-  # Compare expected vs. observed primary key flags. We treat differences as
-  # critical structural issues, since PK definitions are central to relational
-  # integrity and deduplication logic.
-  # ----------------------------------------------------------------------------
-  pk_expected <- expected_tbl |>
-    dplyr::select(
-      .data$lake_variable_name,
-      expected_is_pk = .data$is_primary_key
-    )
-  
-  pk_observed <- observed_tbl |>
-    dplyr::select(
-      .data$lake_variable_name,
-      observed_is_pk = .data$is_primary_key
-    )
-  
-  pk_compare <- pk_expected |>
-    dplyr::left_join(pk_observed, by = "lake_variable_name") |>
-    dplyr::mutate(
-      observed_is_pk = dplyr::coalesce(.data$observed_is_pk, FALSE),
-      pk_mismatch    = .data$expected_is_pk != .data$observed_is_pk
-    ) |>
-    dplyr::filter(.data$pk_mismatch)
-  
-  if (nrow(pk_compare) > 0) {
-    for (i in seq_len(nrow(pk_compare))) {
-      row <- pk_compare[i, ]
-      issues[[length(issues) + 1L]] <- make_issue(
-        lake_variable_name = row$lake_variable_name,
-        issue_code   = "SCHEMA_PK_MISMATCH",
-        issue_type   = "Primary key definition mismatch",
-        issue_group  = "structural",
-        severity     = "critical",
-        is_blocking  = TRUE,
-        expected_value = paste0("is_primary_key = ", row$expected_is_pk),
-        observed_value = paste0("is_primary_key = ", row$observed_is_pk),
-        check_context  = "variable_level"
-      )
-    }
-  }
-  
-  # ----------------------------------------------------------------------------
-  # 5. Column-order drift
-  # ----------------------------------------------------------------------------
-  # Column-order differences are treated as informational issues. The ingest
-  # and harmonization layers should use name-based matching, so ordering drift
-  # is typically non-blocking but still useful to track.
-  # ----------------------------------------------------------------------------
-  order_expected <- expected_tbl |>
-    dplyr::select(
-      .data$lake_variable_name,
-      expected_position = .data$ordinal_position
-    )
-  
-  order_observed <- observed_tbl |>
-    dplyr::select(
-      .data$lake_variable_name,
-      observed_position = .data$ordinal_position
-    )
-  
-  order_compare <- order_expected |>
-    dplyr::inner_join(order_observed, by = "lake_variable_name") |>
-    dplyr::mutate(
-      order_mismatch = .data$expected_position != .data$observed_position
-    ) |>
-    dplyr::filter(.data$order_mismatch)
-  
-  if (nrow(order_compare) > 0) {
-    for (i in seq_len(nrow(order_compare))) {
-      row <- order_compare[i, ]
-      issues[[length(issues) + 1L]] <- make_issue(
-        lake_variable_name = row$lake_variable_name,
-        issue_code   = "SCHEMA_COLUMN_ORDER_DRIFT",
-        issue_type   = "Column ordinal position differs from expected",
-        issue_group  = "structural",
-        severity     = "info",
-        is_blocking  = FALSE,
-        expected_value = paste0("ordinal_position = ", row$expected_position),
-        observed_value = paste0("ordinal_position = ", row$observed_position),
-        check_context  = "variable_level"
-      )
-    }
-  }
-
   # ----------------------------------------------------------------------------
   # 6. Target type validation (for staging schema coercion)
   # ----------------------------------------------------------------------------

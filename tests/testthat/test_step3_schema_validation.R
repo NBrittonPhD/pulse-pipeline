@@ -9,7 +9,7 @@
 #   - Integration with database tables
 #
 # Author: Noel
-# Last Updated: 2026-01-07
+# Last Updated: 2026-01-30
 # =============================================================================
 
 # =============================================================================
@@ -39,12 +39,9 @@ test_that("compare_fields detects missing required fields", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "name", "required_field"),
         data_type = c("integer", "text", "text"),
-        udt_name = c("int4", "text", "text"),
-        is_nullable = c(FALSE, TRUE, FALSE),
         is_required = c(TRUE, FALSE, TRUE),
-        is_primary_key = c(TRUE, FALSE, FALSE),
-        ordinal_position = c(1, 2, 3),
-        schema_version = "test_v1"
+        target_type = c("integer", "text", "text"),
+        version_number = 1L
     )
 
     # Observed schema missing the required_field
@@ -52,10 +49,7 @@ test_that("compare_fields detects missing required fields", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "name"),
         data_type = c("integer", "text"),
-        udt_name = c("int4", "text"),
-        is_nullable = c(FALSE, TRUE),
-        is_primary_key = c(TRUE, FALSE),
-        ordinal_position = c(1, 2)
+        udt_name = c("int4", "text")
     )
 
     result <- compare_fields(expected, observed, "test_table")
@@ -86,12 +80,9 @@ test_that("compare_fields detects missing optional fields as warning", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "optional_field"),
         data_type = c("integer", "text"),
-        udt_name = c("int4", "text"),
-        is_nullable = c(FALSE, TRUE),
         is_required = c(TRUE, FALSE),  # optional_field is NOT required
-        is_primary_key = c(TRUE, FALSE),
-        ordinal_position = c(1, 2),
-        schema_version = "test_v1"
+        target_type = c("integer", "text"),
+        version_number = 1L
     )
 
     # Observed missing the optional field
@@ -99,10 +90,7 @@ test_that("compare_fields detects missing optional fields as warning", {
         lake_table_name = "test_table",
         lake_variable_name = c("id"),
         data_type = c("integer"),
-        udt_name = c("int4"),
-        is_nullable = c(FALSE),
-        is_primary_key = c(TRUE),
-        ordinal_position = c(1)
+        udt_name = c("int4")
     )
 
     result <- compare_fields(expected, observed, "test_table")
@@ -124,12 +112,9 @@ test_that("compare_fields detects unexpected fields", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "name"),
         data_type = c("integer", "text"),
-        udt_name = c("int4", "text"),
-        is_nullable = c(FALSE, TRUE),
         is_required = c(TRUE, FALSE),
-        is_primary_key = c(TRUE, FALSE),
-        ordinal_position = c(1, 2),
-        schema_version = "test_v1"
+        target_type = c("integer", "text"),
+        version_number = 1L
     )
 
     # Observed has an extra field not in expected
@@ -137,10 +122,7 @@ test_that("compare_fields detects unexpected fields", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "name", "unexpected_field"),
         data_type = c("integer", "text", "text"),
-        udt_name = c("int4", "text", "text"),
-        is_nullable = c(FALSE, TRUE, TRUE),
-        is_primary_key = c(TRUE, FALSE, FALSE),
-        ordinal_position = c(1, 2, 3)
+        udt_name = c("int4", "text", "text")
     )
 
     result <- compare_fields(expected, observed, "test_table")
@@ -167,12 +149,9 @@ test_that("compare_fields detects data type mismatches", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "name"),
         data_type = c("integer", "text"),
-        udt_name = c("int4", "text"),
-        is_nullable = c(FALSE, TRUE),
         is_required = c(TRUE, FALSE),
-        is_primary_key = c(TRUE, FALSE),
-        ordinal_position = c(1, 2),
-        schema_version = "test_v1"
+        target_type = c("integer", "text"),
+        version_number = 1L
     )
 
     # Observed: name is INTEGER (type mismatch)
@@ -180,10 +159,7 @@ test_that("compare_fields detects data type mismatches", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "name"),
         data_type = c("integer", "integer"),  # name is wrong type
-        udt_name = c("int4", "int4"),
-        is_nullable = c(FALSE, TRUE),
-        is_primary_key = c(TRUE, FALSE),
-        ordinal_position = c(1, 2)
+        udt_name = c("int4", "int4")
     )
 
     result <- compare_fields(expected, observed, "test_table")
@@ -209,12 +185,9 @@ test_that("compare_fields handles empty observed schema gracefully", {
         lake_table_name = "test_table",
         lake_variable_name = c("id"),
         data_type = c("integer"),
-        udt_name = c("int4"),
-        is_nullable = c(FALSE),
         is_required = c(TRUE),
-        is_primary_key = c(TRUE),
-        ordinal_position = c(1),
-        schema_version = "test_v1"
+        target_type = c("integer"),
+        version_number = 1L
     )
 
     # Empty observed schema
@@ -222,10 +195,7 @@ test_that("compare_fields handles empty observed schema gracefully", {
         lake_table_name = character(),
         lake_variable_name = character(),
         data_type = character(),
-        udt_name = character(),
-        is_nullable = logical(),
-        is_primary_key = logical(),
-        ordinal_position = integer()
+        udt_name = character()
     )
 
     result <- compare_fields(expected, observed, "test_table")
@@ -245,12 +215,9 @@ test_that("compare_fields returns no issues when schemas match", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "name"),
         data_type = c("integer", "text"),
-        udt_name = c("int4", "text"),
-        is_nullable = c(FALSE, TRUE),
         is_required = c(TRUE, FALSE),
-        is_primary_key = c(TRUE, FALSE),
-        ordinal_position = c(1, 2),
-        schema_version = "test_v1"
+        target_type = c("integer", "text"),
+        version_number = 1L
     )
 
     # Observed matches expected exactly
@@ -258,10 +225,7 @@ test_that("compare_fields returns no issues when schemas match", {
         lake_table_name = "test_table",
         lake_variable_name = c("id", "name"),
         data_type = c("integer", "text"),
-        udt_name = c("int4", "text"),
-        is_nullable = c(FALSE, TRUE),
-        is_primary_key = c(TRUE, FALSE),
-        ordinal_position = c(1, 2)
+        udt_name = c("int4", "text")
     )
 
     result <- compare_fields(schema, observed, "test_table")
@@ -436,17 +400,18 @@ test_that("sync_metadata loads data from Excel", {
     # Source the sync function
     source(file.path(proj_root, "r/reference/sync_metadata.R"))
 
-    xlsx_path <- file.path(proj_root, "reference/expected_schema_dictionary.xlsx")
-    skip_if(!file.exists(xlsx_path), "Expected schema dictionary not found")
+    xlsx_path <- file.path(proj_root, "reference/CURRENT_core_metadata_dictionary.xlsx")
+    skip_if(!file.exists(xlsx_path), "Core metadata dictionary not found")
 
-    result <- sync_metadata(con, xlsx_path = xlsx_path, mode = "replace")
+    result <- sync_metadata(con, dict_path = xlsx_path)
 
-    expect_equal(result$status, "success")
+    expect_true(!is.null(result$version_number))
     expect_gte(result$rows_synced, 1)
-    expect_gte(result$tables_synced, 1)
-    expect_true(!is.null(result$schema_version))
+    expect_gte(result$total_variables, 1)
 
     # Verify data in database
-    count <- DBI::dbGetQuery(con, "SELECT COUNT(*) as n FROM reference.metadata")
-    expect_equal(count$n, result$rows_synced)
+    count <- DBI::dbGetQuery(con, "
+        SELECT COUNT(*) as n FROM reference.metadata WHERE is_active = TRUE
+    ")
+    expect_equal(count$n, result$total_variables)
 })
