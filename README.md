@@ -596,7 +596,11 @@ pulse-pipeline/
 │   │   ├── step3_governance.md
 │   │   └── step3_sop_summary.md
 │   └── step4/
-│       └── (see claude/CLAUDE_STEP4_METADATA_SYNC.md)
+│       ├── step4_cluster4_snapshot.json
+│       ├── step4_developer_onboarding.md
+│       ├── step4_function_atlas.md
+│       ├── step4_governance.md
+│       └── step4_sop_summary.md
 │
 ├── reference/                         # Pipeline input dictionaries (tracked in git)
 │   ├── CURRENT_core_metadata_dictionary.xlsx

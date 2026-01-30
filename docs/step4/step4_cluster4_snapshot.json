@@ -1,0 +1,85 @@
+{
+  "version": "step4_cluster4_snapshot_v1",
+  "description": "PULSE pipeline Step 4 x Cluster 4 (Metadata Synchronization) -- code + structure snapshot.",
+  "schemas": {
+    "governance": "governance",
+    "reference": "reference"
+  },
+  "db_objects": {
+    "tables": [
+      {
+        "name": "reference.metadata",
+        "purpose": "Dictionary definitions synced from CURRENT_core_metadata_dictionary.xlsx. One row per (lake_table_name, lake_variable_name, source_type).",
+        "ddl_file": "sql/ddl/recreate_METADATA_v2.sql",
+        "key_columns": ["lake_table_name", "lake_variable_name", "source_type", "source_table_name", "source_variable_name", "data_type", "variable_label", "variable_definition", "value_labels", "variable_unit", "valid_min", "valid_max", "allowed_values", "is_identifier", "is_phi", "is_required", "validated_table_target", "validated_variable_name", "notes", "needs_further_review", "version_number", "is_active", "created_at", "updated_at"]
+      },
+      {
+        "name": "reference.metadata_history",
+        "purpose": "Field-level change audit trail. One row per field changed per variable per version.",
+        "ddl_file": "sql/ddl/create_METADATA_HISTORY.sql",
+        "key_columns": ["history_id", "version_number", "lake_table_name", "lake_variable_name", "source_type", "field_changed", "old_value", "new_value", "change_type", "changed_at", "changed_by"]
+      }
+    ]
+  },
+  "functions": [
+    {
+      "name": "sync_metadata",
+      "file": "r/reference/sync_metadata.R",
+      "category": "step_logic",
+      "description": "Step 4 orchestrator: load dictionary from Excel, compare to current DB state, write change history, upsert metadata, log audit event.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbWriteTable", "DBI::dbExecute", "load_metadata_dictionary", "compare_metadata", "write_audit_event", "dplyr", "glue"],
+      "called_by": ["4_sync_metadata.R", "3_validate_schema.R (optional pre-sync)", "tests"]
+    },
+    {
+      "name": "load_metadata_dictionary",
+      "file": "r/reference/load_metadata_dictionary.R",
+      "category": "reference_loader",
+      "description": "Load CURRENT_core_metadata_dictionary.xlsx, validate required columns, standardize Y/N to boolean, check for duplicate keys.",
+      "calls": ["readxl::read_excel", "dplyr"],
+      "called_by": ["sync_metadata", "tests"]
+    },
+    {
+      "name": "compare_metadata",
+      "file": "r/utilities/compare_metadata.R",
+      "category": "utility",
+      "description": "Compare new dictionary vs current DB state. Return field-level diff classified as INITIAL/ADD/UPDATE/REMOVE.",
+      "calls": ["dplyr", "tidyr", "tibble"],
+      "called_by": ["sync_metadata", "tests"]
+    },
+    {
+      "name": "get_current_metadata_version",
+      "file": "r/reference/get_current_metadata_version.R",
+      "category": "utility",
+      "description": "Return the current MAX(version_number) from reference.metadata. Returns 0 if empty.",
+      "calls": ["DBI::dbGetQuery"],
+      "called_by": ["sync_metadata", "manual use", "tests"]
+    }
+  ],
+  "scripts": [
+    {
+      "path": "r/scripts/4_sync_metadata.R",
+      "purpose": "Human-friendly Step 4 entry: set dict_path, call sync_metadata(), print version and change summary."
+    }
+  ],
+  "reference_files": [
+    {
+      "path": "reference/CURRENT_core_metadata_dictionary.xlsx",
+      "purpose": "Governed Excel file defining all variable definitions, types, labels, and validation rules."
+    }
+  ],
+  "tests": {
+    "unit": "tests/testthat/test_step4_metadata_sync.R",
+    "status": "all_pass",
+    "count": "52 PASS, 0 FAIL"
+  },
+  "step4_status": {
+    "ddl_created": true,
+    "functions_implemented": true,
+    "dictionary_loading_working": true,
+    "field_level_comparison_working": true,
+    "version_tracking_working": true,
+    "soft_delete_working": true,
+    "audit_trail_working": true,
+    "unit_tests_pass": true
+  }
+}
