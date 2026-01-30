@@ -251,22 +251,22 @@ orchestrate_metadata_refresh <- function(con,
           nrow(build_schema_result))
 
   # =========================================================================
-  # STEP E: SYNC METADATA TO DATABASE (EXISTING FUNCTION)
+  # STEP E: SYNC METADATA TO DATABASE (VERSIONED)
   # =========================================================================
-  # This calls the existing sync_metadata() function, which reads
-  # expected_schema_dictionary.xlsx and loads it into reference.metadata.
+  # This calls sync_metadata() which reads the core metadata dictionary
+  # directly, compares field-by-field against the current database state,
+  # writes changes to reference.metadata_history, and upserts
+  # reference.metadata with a new version number.
   # =========================================================================
   message("")
   message(">> ============================================================")
-  message(">> STEP E: SYNC METADATA TO DATABASE")
+  message(">> STEP E: SYNC METADATA TO DATABASE (VERSIONED)")
   message(">> ============================================================")
 
   sync_metadata_result <- tryCatch({
     sync_metadata(
-      con        = con,
-      xlsx_path  = expected_schema_path,
-      mode       = sync_mode,
-      created_by = created_by
+      con       = con,
+      dict_path = core_dict_path
     )
   }, error = function(e) {
     message("[orchestrate] STEP E FAILED: ", e$message)
@@ -276,8 +276,9 @@ orchestrate_metadata_refresh <- function(con,
   })
 
   steps_completed <- c(steps_completed, "E:sync_metadata")
-  message("[orchestrate] Step E complete. Rows synced: ",
-          sync_metadata_result$rows_synced)
+  message("[orchestrate] Step E complete. Version: ",
+          sync_metadata_result$version_number,
+          ", rows synced: ", sync_metadata_result$rows_synced)
 
   # =========================================================================
   # FINAL SUMMARY
@@ -303,7 +304,8 @@ orchestrate_metadata_refresh <- function(con,
   message("  Step D (expected schema): ", nrow(build_schema_result),
           " rows built")
   message("  Step E (metadata sync):   ", sync_metadata_result$rows_synced,
-          " rows synced")
+          " rows synced (v", sync_metadata_result$version_number,
+          ", ", sync_metadata_result$total_changes, " changes)")
   message("=================================================================")
 
   if (update_type_result$new_rows > 0) {

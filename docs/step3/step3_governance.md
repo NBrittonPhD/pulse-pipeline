@@ -13,18 +13,18 @@ Step 3 ensures schema compliance by validating raw table structures against gove
 
 ### Schema Version Management
 
-- All expected schemas are versioned (`schema_version`)
-- Version history preserved via `effective_from` / `effective_to` dates
-- Only active schemas (`is_active = TRUE`) used for validation
-- Historical schemas retained for audit and reproducibility
+- All expected schemas are versioned (`version_number` in `reference.metadata`)
+- Field-level change history tracked in `reference.metadata_history`
+- Only active variables (`is_active = TRUE`) used for validation
+- Removed variables are soft-deleted (not physically deleted)
+- Historical changes retained for audit and reproducibility
 
 ### Issue Classification
 
 | Severity | Blocking | Examples |
 |----------|----------|----------|
-| `critical` | Yes | Missing required columns, type mismatch on PK fields |
-| `warning` | No | Missing optional columns, unexpected extra columns |
-| `info` | No | Column order drift, minor discrepancies |
+| `critical` | Yes | Missing required columns, unexpected extra columns |
+| `warning` | No | Type mismatches, target type mismatches, missing target types |
 
 ### Halt Behavior
 
@@ -38,9 +38,10 @@ Step 3 ensures schema compliance by validating raw table structures against gove
 
 ### `reference.metadata`
 
-- `synced_at`: When schema was synced from Excel
+- `version_number`: Metadata version, incremented on each sync
+- `is_active`: TRUE = active variable, FALSE = soft-deleted
 - `created_at`: Row creation timestamp
-- `created_by`: Identifier of sync process
+- `updated_at`: Last modified timestamp
 
 ### `governance.structure_qc_table`
 
@@ -56,7 +57,7 @@ Step 3 ensures schema compliance by validating raw table structures against gove
 ### Deterministic Validation
 
 1. Same `ingest_id` always validates same tables
-2. Same `schema_version` always produces same expected schema
+2. Same `version_number` always produces same expected schema
 3. Issues keyed by `ingest_id + lake_table_name + lake_variable_name + issue_code`
 
 ### Re-validation
@@ -70,9 +71,8 @@ To re-validate a batch:
 ## Compliance Checklist
 
 - [ ] `reference.metadata` table exists with active schema definitions
-- [ ] Schema version matches expected release
+- [ ] Version number matches expected release
 - [ ] All required columns defined with `is_required = TRUE`
-- [ ] Primary keys marked with `is_primary_key = TRUE`
 - [ ] `structure_qc_table` captures all detected issues
 - [ ] Critical issues halt pipeline when configured
 - [ ] Validation results queryable by `ingest_id`
@@ -83,7 +83,8 @@ To re-validate a batch:
 
 | Artifact | Location | Purpose |
 |----------|----------|---------|
-| Expected Schema Dictionary | `reference/expected_schema_dictionary.xlsx` | Source of truth for schema definitions |
-| Metadata Table | `reference.metadata` | Database-queryable schema definitions |
+| Core Metadata Dictionary | `reference/CURRENT_core_metadata_dictionary.xlsx` | Source of truth for variable definitions |
+| Metadata Table | `reference.metadata` | Database-queryable dictionary definitions (synced by Step 4) |
+| Metadata History | `reference.metadata_history` | Field-level change audit trail |
 | Structure QC Table | `governance.structure_qc_table` | Issue audit log |
 | Batch Log | `governance.batch_log` | Links ingest_id to source metadata |

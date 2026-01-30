@@ -16,9 +16,9 @@
       },
       {
         "name": "reference.metadata",
-        "purpose": "Expected schema definitions. One row per variable per table per schema version.",
-        "ddl_file": "sql/ddl/create_METADATA.sql",
-        "key_columns": ["schema_version", "effective_from", "effective_to", "lake_table_name", "lake_variable_name", "data_type", "udt_name", "is_nullable", "is_required", "is_primary_key", "is_active", "synced_at", "created_at", "created_by"]
+        "purpose": "Dictionary definitions synced from CURRENT_core_metadata_dictionary.xlsx. One row per (lake_table_name, lake_variable_name, source_type).",
+        "ddl_file": "sql/ddl/recreate_METADATA_v2.sql",
+        "key_columns": ["lake_table_name", "lake_variable_name", "source_type", "data_type", "target_type", "is_required", "version_number", "is_active", "created_at", "updated_at"]
       }
     ]
   },
@@ -35,7 +35,7 @@
       "name": "compare_fields",
       "file": "r/utilities/compare_fields.R",
       "category": "utility",
-      "description": "Compare expected vs observed schema for a single table. Detects missing columns, extra columns, type mismatches, PK mismatches, and column order drift.",
+      "description": "Compare expected vs observed schema for a single table. Detects missing columns, extra columns, type mismatches, and target type discrepancies.",
       "calls": ["dplyr", "tibble"],
       "called_by": ["validate_schema", "tests"]
     },

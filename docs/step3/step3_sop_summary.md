@@ -10,10 +10,11 @@ Step 3 validates that all ingested raw tables conform to the expected schema def
 ## Purpose
 
 - Compare observed table structures against expected schema definitions.
-- Detect structural anomalies: missing columns, extra columns, type mismatches, PK discrepancies.
+- Filter expected schema by source type to avoid cross-source false positives.
+- Detect structural anomalies: missing columns, extra columns, type mismatches, target type discrepancies.
 - Log all issues to `governance.structure_qc_table` for audit and governance.
 - Optionally halt pipeline on critical issues.
-- Prepare validated data for profiling (Step 4).
+- Prepare validated data for profiling (Step 5).
 
 ---
 
@@ -32,9 +33,8 @@ Step 3 validates that all ingested raw tables conform to the expected schema def
    Call `compare_fields()` to check expected vs observed structure.
 
 5. **Classify issues by severity.**
-   - `critical`: Missing required columns, type mismatches on key fields
-   - `warning`: Missing optional columns, unexpected extra columns
-   - `info`: Column order drift, minor discrepancies
+   - `critical`: Missing required columns, unexpected extra columns
+   - `warning`: Type mismatches, target type mismatches, missing target types
 
 6. **Write issues.**
    Insert all detected issues into `governance.structure_qc_table`.
@@ -49,7 +49,7 @@ Step 3 validates that all ingested raw tables conform to the expected schema def
 - Schema comparison results for all tables
 - Issues logged in `governance.structure_qc_table`
 - Validation summary (tables validated, issue counts by severity)
-- Ready for Step 4 data profiling
+- Ready for Step 5 data profiling
 
 ---
 
@@ -92,7 +92,7 @@ flowchart TD
 | `r/scripts/3_validate_schema.R` | User-facing wrapper script |
 | `r/steps/validate_schema.R` | Core validation orchestrator |
 | `r/utilities/compare_fields.R` | Field comparison helper |
-| `r/reference/sync_metadata.R` | Excel to database sync |
-| `sql/ddl/create_METADATA.sql` | Expected schema table DDL |
+| `r/reference/sync_metadata.R` | Core metadata dictionary sync (Step 4) |
+| `sql/ddl/recreate_METADATA_v2.sql` | Dictionary-based metadata table DDL |
 | `sql/ddl/create_STRUCTURE_QC_TABLE.sql` | Issue logging table DDL |
-| `reference/expected_schema_dictionary.xlsx` | Governed schema definitions |
+| `reference/CURRENT_core_metadata_dictionary.xlsx` | Master metadata dictionary |

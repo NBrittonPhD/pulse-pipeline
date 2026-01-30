@@ -1,288 +1,318 @@
 # =============================================================================
 # sync_metadata
 # =============================================================================
-# Purpose:
-#   Synchronize expected schema definitions from expected_schema_dictionary.xlsx
-#   into reference.metadata table. This function is the bridge between the
-#   governed Excel file and the database table used by validate_schema().
+# Purpose:      Synchronize the core metadata dictionary from Excel to the
+#               database with full version tracking and field-level audit trail.
+#
+#               This function:
+#                 1. Loads the dictionary from Excel via load_metadata_dictionary()
+#                 2. Queries current reference.metadata for active variables
+#                 3. Compares via compare_metadata() to detect field-level changes
+#                 4. Determines the next version number
+#                 5. Writes all changes to reference.metadata_history
+#                 6. Upserts reference.metadata (INSERT new, UPDATE existing,
+#                    soft-delete removed)
+#                 7. Writes audit event to governance.audit_log
 #
 # Inputs:
-#   con (DBIConnection)
-#       Active database connection to PULSE.
+#   - con:                DBI connection object
+#   - dict_path:          character path to core metadata dictionary Excel
+#   - source_type_filter: character (optional) filter to specific source_type
 #
-#   xlsx_path (character)
-#       Path to expected_schema_dictionary.xlsx.
-#       Default: "reference/expected_schema_dictionary.xlsx"
-#
-#   mode (character)
-#       How to handle existing data:
-#         - "replace": DROP all existing rows, INSERT fresh (default)
-#         - "upsert":  Update existing rows, INSERT new ones
-#         - "append":  INSERT only, fail on duplicates
-#
-#   created_by (character)
-#       Identifier for who/what triggered the sync.
-#       Default: "sync_metadata"
-#
-# Outputs:
-#   A list with:
-#     - status: "success" or "error"
-#     - rows_synced: integer count of rows written
-#     - tables_synced: integer count of distinct tables
-#     - schema_version: character version synced
-#     - error_message: NULL or character if error
+# Outputs:      List with:
+#                 version_number, total_variables, adds, updates, removes,
+#                 total_changes
 #
 # Side Effects:
-#   - Writes/overwrites rows in reference.metadata
-#   - Creates table if it doesn't exist (runs DDL)
+#   - Writes to reference.metadata (upsert)
+#   - Writes to reference.metadata_history (append)
+#   - Writes to governance.audit_log (append)
 #
 # Dependencies:
-#   - DBI, readxl, dplyr, glue
-#   - sql/ddl/create_METADATA.sql
+#   - DBI, dplyr, glue, tibble
+#   - load_metadata_dictionary() from r/reference/load_metadata_dictionary.R
+#   - compare_metadata() from r/utilities/compare_metadata.R
+#   - write_audit_event() from r/steps/write_audit_event.R
 #
-# Author: Noel
-# Last Updated: 2026-01-07
+# Author:       Noel
+# Last Updated: 2026-01-30
 # =============================================================================
 
 # =============================================================================
 # LOAD REQUIRED PACKAGES
 # =============================================================================
 library(DBI)
-library(readxl)
 library(dplyr)
 library(glue)
+library(tibble)
 
 # =============================================================================
 # FUNCTION DEFINITION
 # =============================================================================
-sync_metadata <- function(con,
-                          xlsx_path = NULL,
-                          mode = "replace",
-                          created_by = "sync_metadata") {
+sync_metadata <- function(con, dict_path, source_type_filter = NULL) {
 
-    # =========================================================================
-    # RESOLVE PROJECT ROOT FOR RELATIVE PATHS
-    # =========================================================================
-    proj_root <- getOption("pulse.proj_root", default = ".")
-
-    # Default xlsx_path if not provided
-    if (is.null(xlsx_path)) {
-        xlsx_path <- file.path(proj_root, "reference/expected_schema_dictionary.xlsx")
-    }
+    message("=================================================================")
+    message("[sync_metadata] STEP 4: METADATA SYNCHRONIZATION")
+    message("=================================================================")
 
     # =========================================================================
     # INPUT VALIDATION
     # =========================================================================
-    message("=================================================================")
-    message("[sync_metadata] Starting metadata synchronization")
-    message("=================================================================")
-
-    # Validate connection
     if (!inherits(con, "DBIConnection")) {
         stop("[sync_metadata] ERROR: 'con' must be a valid DBI connection object.")
     }
 
-    # Validate xlsx_path
-    if (!file.exists(xlsx_path)) {
-        stop(glue("[sync_metadata] ERROR: Excel file not found at '{xlsx_path}'."))
+    if (!DBI::dbIsValid(con)) {
+        stop("[sync_metadata] ERROR: Database connection is not valid.")
     }
 
-    # Validate mode
-    valid_modes <- c("replace", "upsert", "append")
-    if (!mode %in% valid_modes) {
-        stop(glue("[sync_metadata] ERROR: Invalid mode '{mode}'. Must be one of: {paste(valid_modes, collapse = ', ')}"))
+    if (is.null(dict_path) || !file.exists(dict_path)) {
+        stop(glue("[sync_metadata] ERROR: Dictionary file not found: {dict_path}"))
     }
 
-    message(glue("[sync_metadata] Excel path: {xlsx_path}"))
-    message(glue("[sync_metadata] Sync mode:  {mode}"))
+    # =========================================================================
+    # SOURCE DEPENDENCIES
+    # =========================================================================
+    proj_root <- getOption("pulse.proj_root", default = ".")
+
+    source(file.path(proj_root, "r", "reference", "load_metadata_dictionary.R"))
+    source(file.path(proj_root, "r", "utilities", "compare_metadata.R"))
+    source(file.path(proj_root, "r", "steps", "write_audit_event.R"))
 
     # =========================================================================
-    # ENSURE TABLE EXISTS
+    # LOAD NEW DICTIONARY FROM EXCEL
     # =========================================================================
-    # Run the DDL to create the table if it doesn't exist
-    # =========================================================================
-    ddl_path <- file.path(proj_root, "sql/ddl/create_METADATA.sql")
+    message("[sync_metadata] Loading dictionary from Excel...")
 
-    if (file.exists(ddl_path)) {
-        message("[sync_metadata] Ensuring reference.metadata table exists...")
-        ddl_sql <- readr::read_file(ddl_path)
-        tryCatch(
-            DBI::dbExecute(con, ddl_sql),
-            error = function(e) {
-                # Table may already exist, which is fine
-                message(glue("[sync_metadata] Note: DDL execution returned: {e$message}"))
-            }
+    new_dict <- load_metadata_dictionary(dict_path, source_type_filter)
+
+    # =========================================================================
+    # QUERY CURRENT METADATA FROM DATABASE
+    # =========================================================================
+    message("[sync_metadata] Querying current metadata from database...")
+
+    current_dict <- DBI::dbGetQuery(con, "
+        SELECT *
+        FROM reference.metadata
+        WHERE is_active = TRUE
+    ") %>% tibble::as_tibble()
+
+    message(glue("[sync_metadata]   Current database has {nrow(current_dict)} active variables"))
+
+    # =========================================================================
+    # COMPARE DICTIONARIES
+    # =========================================================================
+    message("[sync_metadata] Comparing dictionaries...")
+
+    changes <- compare_metadata(new_dict, current_dict)
+
+    # =========================================================================
+    # COUNT CHANGE TYPES
+    # =========================================================================
+    n_initial <- sum(changes$change_type == "INITIAL")
+    n_adds    <- sum(changes$change_type == "ADD")
+    n_updates <- sum(changes$change_type == "UPDATE")
+    n_removes <- sum(changes$change_type == "REMOVE")
+
+    message(glue(
+        "[sync_metadata]   Changes: {n_initial} initial, {n_adds} adds, ",
+        "{n_updates} updates, {n_removes} removes"
+    ))
+
+    # =========================================================================
+    # DETERMINE VERSION NUMBER
+    # =========================================================================
+    current_max_version <- DBI::dbGetQuery(con, "
+        SELECT COALESCE(MAX(version_number), 0) as max_version
+        FROM reference.metadata
+    ")$max_version[1]
+
+    new_version <- current_max_version + 1L
+
+    message(glue("[sync_metadata]   New version number: {new_version}"))
+
+    # =========================================================================
+    # WRITE CHANGES TO METADATA HISTORY
+    # =========================================================================
+    if (nrow(changes) > 0) {
+        message("[sync_metadata] Writing changes to reference.metadata_history...")
+
+        history_records <- changes %>%
+            dplyr::mutate(
+                version_number = new_version,
+                changed_at = Sys.time()
+            )
+
+        DBI::dbWriteTable(
+            con,
+            DBI::Id(schema = "reference", table = "metadata_history"),
+            history_records,
+            append = TRUE,
+            row.names = FALSE
         )
+
+        message(glue("[sync_metadata]   Wrote {nrow(history_records)} history records"))
     } else {
-        message("[sync_metadata] WARNING: DDL file not found, assuming table exists.")
+        message("[sync_metadata]   No changes detected — skipping history write.")
     }
 
     # =========================================================================
-    # LOAD EXCEL DATA
+    # UPSERT METADATA TABLE
     # =========================================================================
-    message("[sync_metadata] Loading Excel file...")
+    message("[sync_metadata] Upserting reference.metadata...")
 
-    excel_data <- tryCatch(
-        readxl::read_excel(xlsx_path),
-        error = function(e) {
-            stop(glue("[sync_metadata] ERROR: Failed to read Excel file: {e$message}"))
-        }
-    )
-
-    message(glue("[sync_metadata] Loaded {nrow(excel_data)} rows from Excel."))
-
-    # Validate required columns exist
-    required_cols <- c(
-        "schema_version", "effective_from", "lake_table_name",
-        "lake_variable_name", "data_type"
-    )
-    missing_cols <- setdiff(required_cols, names(excel_data))
-    if (length(missing_cols) > 0) {
-        stop(glue(
-            "[sync_metadata] ERROR: Excel file missing required columns: ",
-            "{paste(missing_cols, collapse = ', ')}"
-        ))
-    }
-
-    # =========================================================================
-    # PREPARE DATA FOR INSERT
-    # =========================================================================
-    message("[sync_metadata] Preparing data for database insert...")
-
-    # Add governance columns
-    sync_data <- excel_data %>%
-        mutate(
+    # -------------------------------------------------------------------------
+    # Prepare new_dict for insertion with governance columns
+    # -------------------------------------------------------------------------
+    new_dict <- new_dict %>%
+        dplyr::mutate(
+            version_number = new_version,
             is_active = TRUE,
-            synced_at = Sys.time(),
-            created_at = Sys.time(),
-            created_by = !!created_by
+            updated_at = Sys.time(),
+            created_at = Sys.time()
         )
 
-    # Convert POSIXct to Date for effective_from/effective_to
-    if ("effective_from" %in% names(sync_data)) {
-        sync_data$effective_from <- as.Date(sync_data$effective_from)
-    }
-    if ("effective_to" %in% names(sync_data)) {
-        sync_data$effective_to <- as.Date(sync_data$effective_to)
-    }
+    # -------------------------------------------------------------------------
+    # Soft-delete removed variables
+    # -------------------------------------------------------------------------
+    # Variables in the current DB but not in the new dictionary get
+    # is_active = FALSE rather than being physically deleted.
+    # -------------------------------------------------------------------------
+    if (nrow(current_dict) > 0) {
+        new_keys <- paste(new_dict$lake_table_name, new_dict$lake_variable_name,
+                          new_dict$source_type, sep = "|")
+        current_keys <- paste(current_dict$lake_table_name, current_dict$lake_variable_name,
+                              current_dict$source_type, sep = "|")
 
-    # Get schema version for reporting
-    schema_version <- unique(sync_data$schema_version)[1]
-    n_tables <- n_distinct(sync_data$lake_table_name)
+        removed_keys <- setdiff(current_keys, new_keys)
 
-    message(glue("[sync_metadata] Schema version: {schema_version}"))
-    message(glue("[sync_metadata] Tables: {n_tables}"))
-    message(glue("[sync_metadata] Variables: {nrow(sync_data)}"))
+        if (length(removed_keys) > 0) {
+            message(glue("[sync_metadata]   Soft-deleting {length(removed_keys)} removed variables..."))
 
-    # =========================================================================
-    # EXECUTE SYNC BASED ON MODE
-    # =========================================================================
-
-    tbl_id <- DBI::Id(schema = "reference", table = "metadata")
-
-    if (mode == "replace") {
-        # ---------------------------------------------------------------------
-        # REPLACE MODE: Delete all existing, insert fresh
-        # ---------------------------------------------------------------------
-        message("[sync_metadata] Mode 'replace': Deleting existing rows...")
-
-        tryCatch({
-            DBI::dbExecute(con, "DELETE FROM reference.metadata")
-            message("[sync_metadata] Existing rows deleted.")
-        }, error = function(e) {
-            message(glue("[sync_metadata] Note: Delete returned: {e$message}"))
-        })
-
-        message("[sync_metadata] Inserting new rows...")
-
-        # Remove metadata_id column if it exists (it's auto-generated)
-        if ("metadata_id" %in% names(sync_data)) {
-            sync_data <- sync_data %>% select(-metadata_id)
+            for (key in removed_keys) {
+                parts <- strsplit(key, "\\|")[[1]]
+                DBI::dbExecute(con, glue::glue_sql("
+                    UPDATE reference.metadata
+                    SET is_active = FALSE,
+                        updated_at = NOW(),
+                        version_number = {new_version}
+                    WHERE lake_table_name = {parts[1]}
+                      AND lake_variable_name = {parts[2]}
+                      AND source_type = {parts[3]}
+                ", .con = con))
+            }
         }
-
-        DBI::dbWriteTable(
-            con,
-            tbl_id,
-            sync_data,
-            append = TRUE,
-            row.names = FALSE
-        )
-
-        rows_synced <- nrow(sync_data)
-
-    } else if (mode == "append") {
-        # ---------------------------------------------------------------------
-        # APPEND MODE: Insert only, may fail on duplicates
-        # ---------------------------------------------------------------------
-        message("[sync_metadata] Mode 'append': Inserting new rows...")
-
-        if ("metadata_id" %in% names(sync_data)) {
-            sync_data <- sync_data %>% select(-metadata_id)
-        }
-
-        DBI::dbWriteTable(
-            con,
-            tbl_id,
-            sync_data,
-            append = TRUE,
-            row.names = FALSE
-        )
-
-        rows_synced <- nrow(sync_data)
-
-    } else if (mode == "upsert") {
-        # ---------------------------------------------------------------------
-        # UPSERT MODE: Update existing, insert new
-        # This is more complex and requires row-by-row logic
-        # ---------------------------------------------------------------------
-        message("[sync_metadata] Mode 'upsert': Upserting rows...")
-
-        # For simplicity, we'll use replace mode logic for now
-        # A true upsert would require ON CONFLICT handling
-        message("[sync_metadata] WARNING: Upsert mode falling back to replace for now.")
-
-        DBI::dbExecute(con, "DELETE FROM reference.metadata")
-
-        if ("metadata_id" %in% names(sync_data)) {
-            sync_data <- sync_data %>% select(-metadata_id)
-        }
-
-        DBI::dbWriteTable(
-            con,
-            tbl_id,
-            sync_data,
-            append = TRUE,
-            row.names = FALSE
-        )
-
-        rows_synced <- nrow(sync_data)
     }
 
-    # =========================================================================
-    # VERIFY SYNC
-    # =========================================================================
-    message("[sync_metadata] Verifying sync...")
+    # -------------------------------------------------------------------------
+    # Upsert via temp table + INSERT ON CONFLICT
+    # -------------------------------------------------------------------------
+    # Write new dictionary to a temp table, then upsert into reference.metadata.
+    # This is more efficient than row-by-row operations for 1000+ variables.
+    # -------------------------------------------------------------------------
+    temp_table <- paste0("temp_metadata_", format(Sys.time(), "%Y%m%d%H%M%S"))
 
-    count_check <- DBI::dbGetQuery(con, "SELECT COUNT(*) as n FROM reference.metadata")
-
-    message(glue("[sync_metadata] Rows in reference.metadata: {count_check$n}"))
-
-    # =========================================================================
-    # RETURN RESULTS
-    # =========================================================================
-    message("=================================================================")
-    message("[sync_metadata] Synchronization complete!")
-    message("=================================================================")
-    message(glue("  Schema Version: {schema_version}"))
-    message(glue("  Tables Synced:  {n_tables}"))
-    message(glue("  Rows Synced:    {rows_synced}"))
-    message("=================================================================")
-
-    list(
-        status = "success",
-        rows_synced = rows_synced,
-        tables_synced = n_tables,
-        schema_version = schema_version,
-        error_message = NULL
+    DBI::dbWriteTable(
+        con,
+        temp_table,
+        new_dict,
+        temporary = TRUE,
+        row.names = FALSE
     )
+
+    upsert_sql <- glue::glue_sql("
+        INSERT INTO reference.metadata (
+            lake_table_name, lake_variable_name, source_type,
+            source_table_name, source_variable_name, data_type,
+            variable_label, variable_definition, value_labels,
+            variable_unit, valid_min, valid_max, allowed_values,
+            is_identifier, is_phi, is_required,
+            validated_table_target, validated_variable_name,
+            notes, needs_further_review,
+            version_number, is_active, created_at, updated_at
+        )
+        SELECT
+            lake_table_name, lake_variable_name, source_type,
+            source_table_name, source_variable_name, data_type,
+            variable_label, variable_definition, value_labels,
+            variable_unit, valid_min, valid_max, allowed_values,
+            is_identifier, is_phi, is_required,
+            validated_table_target, validated_variable_name,
+            notes, needs_further_review,
+            version_number, is_active, created_at, updated_at
+        FROM {`temp_table`}
+        ON CONFLICT (lake_table_name, lake_variable_name, source_type)
+        DO UPDATE SET
+            source_table_name = EXCLUDED.source_table_name,
+            source_variable_name = EXCLUDED.source_variable_name,
+            data_type = EXCLUDED.data_type,
+            variable_label = EXCLUDED.variable_label,
+            variable_definition = EXCLUDED.variable_definition,
+            value_labels = EXCLUDED.value_labels,
+            variable_unit = EXCLUDED.variable_unit,
+            valid_min = EXCLUDED.valid_min,
+            valid_max = EXCLUDED.valid_max,
+            allowed_values = EXCLUDED.allowed_values,
+            is_identifier = EXCLUDED.is_identifier,
+            is_phi = EXCLUDED.is_phi,
+            is_required = EXCLUDED.is_required,
+            validated_table_target = EXCLUDED.validated_table_target,
+            validated_variable_name = EXCLUDED.validated_variable_name,
+            notes = EXCLUDED.notes,
+            needs_further_review = EXCLUDED.needs_further_review,
+            version_number = EXCLUDED.version_number,
+            is_active = EXCLUDED.is_active,
+            updated_at = EXCLUDED.updated_at
+    ", .con = con)
+
+    DBI::dbExecute(con, upsert_sql)
+
+    message(glue("[sync_metadata]   Upserted {nrow(new_dict)} variables"))
+
+    # =========================================================================
+    # WRITE AUDIT LOG EVENT
+    # =========================================================================
+    message("[sync_metadata] Writing audit log event...")
+
+    write_audit_event(
+        con         = con,
+        event_type  = "metadata_sync",
+        object_type = "table",
+        object_name = "reference.metadata",
+        status      = "success",
+        details     = list(
+            version_number  = new_version,
+            dict_path       = dict_path,
+            source_filter   = source_type_filter %||% "ALL",
+            total_variables = nrow(new_dict),
+            initial         = n_initial,
+            adds            = n_adds,
+            updates         = n_updates,
+            removes         = n_removes
+        )
+    )
+
+    # =========================================================================
+    # RETURN SUMMARY
+    # =========================================================================
+    message("=================================================================")
+    message(glue("[sync_metadata] METADATA SYNC COMPLETE — Version {new_version}"))
+    message("=================================================================")
+    message(glue("  Total variables: {nrow(new_dict)}"))
+    message(glue("  Initial:         {n_initial}"))
+    message(glue("  Adds:            {n_adds}"))
+    message(glue("  Updates:         {n_updates}"))
+    message(glue("  Removes:         {n_removes}"))
+    message(glue("  Total changes:   {nrow(changes)}"))
+    message("=================================================================")
+
+    return(list(
+        version_number  = new_version,
+        total_variables = nrow(new_dict),
+        adds            = n_adds + n_initial,
+        updates         = n_updates,
+        removes         = n_removes,
+        total_changes   = nrow(changes),
+        rows_synced     = nrow(new_dict)
+    ))
 }

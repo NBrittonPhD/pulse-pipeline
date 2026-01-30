@@ -40,7 +40,7 @@ validate_schema(
 
 **File:** `r/utilities/compare_fields.R`
 
-**Purpose:** Compare expected schema vs observed schema for a single table. Detects missing columns, extra columns, type mismatches, PK mismatches, and column order drift.
+**Purpose:** Compare expected schema vs observed schema for a single table. Detects missing columns, extra columns, type mismatches, and target type discrepancies.
 
 **Signature:**
 ```r
@@ -58,11 +58,11 @@ compare_fields(
 - `issues`: tibble with issue details
 
 **Issue Types Detected:**
-- `SCHEMA_MISSING_COLUMN`: Expected column not present
-- `SCHEMA_UNEXPECTED_COLUMN`: Column present but not expected
-- `SCHEMA_TYPE_MISMATCH`: Data type differs from expected
-- `SCHEMA_PK_MISMATCH`: Primary key designation differs
-- `SCHEMA_COLUMN_ORDER_DRIFT`: Column position differs from expected
+- `SCHEMA_MISSING_COLUMN`: Required column not present in observed schema
+- `SCHEMA_UNEXPECTED_COLUMN`: Column present in observed but not in expected schema
+- `SCHEMA_TYPE_MISMATCH`: Data type differs between expected and observed
+- `TYPE_TARGET_MISMATCH`: Observed type does not match target staging type
+- `TYPE_TARGET_MISSING`: No target type defined in type_decision_table
 
 ---
 
@@ -70,29 +70,31 @@ compare_fields(
 
 **File:** `r/reference/sync_metadata.R`
 
-**Purpose:** Synchronize expected schema definitions from Excel to `reference.metadata` table.
+**Purpose:** Synchronize the core metadata dictionary from Excel to `reference.metadata` with full version tracking and field-level audit trail.
 
 **Signature:**
 ```r
 sync_metadata(
-    con,                    # DBIConnection (required)
-    xlsx_path = NULL,       # character: path to Excel file (defaults to reference/)
-    mode = "replace",       # character: "replace", "upsert", or "append"
-    created_by = "sync_metadata"  # character: audit identifier
+    con,                        # DBIConnection (required)
+    dict_path,                  # character: path to CURRENT_core_metadata_dictionary.xlsx
+    source_type_filter = NULL   # character: optional filter to specific source_type
 )
 ```
 
 **Returns:** List with:
-- `status`: "success" or "error"
+- `version_number`: integer new version number
+- `total_variables`: integer count of variables synced
+- `adds`: integer count of new variables (including initial)
+- `updates`: integer count of updated variables
+- `removes`: integer count of soft-deleted variables
+- `total_changes`: integer total field-level changes
 - `rows_synced`: integer count of rows written
-- `tables_synced`: integer count of distinct tables
-- `schema_version`: character version synced
-- `error_message`: NULL or error details
 
-**Modes:**
-- `replace`: Delete all existing rows, insert fresh
-- `append`: Insert only, fail on duplicates
-- `upsert`: Update existing, insert new (currently falls back to replace)
+**Behavior:**
+- Compares new dictionary against current DB state via `compare_metadata()`
+- Writes field-level changes to `reference.metadata_history`
+- Upserts `reference.metadata` (INSERT new, UPDATE existing, soft-delete removed)
+- Writes audit event to `governance.audit_log`
 
 ---
 
@@ -102,8 +104,10 @@ sync_metadata(
 3_validate_schema.R (user script)
     └── validate_schema.R (step function)
             ├── compare_fields.R (utility)
-            └── sync_metadata.R (optional sync)
-                    └── expected_schema_dictionary.xlsx
+            └── sync_metadata.R (optional pre-sync, Step 4)
+                    ├── load_metadata_dictionary.R
+                    ├── compare_metadata.R
+                    └── CURRENT_core_metadata_dictionary.xlsx
 ```
 
 ---
@@ -112,13 +116,13 @@ sync_metadata(
 
 ### `reference.metadata`
 
-Expected schema definitions. One row per variable per table per version.
+Dictionary definitions synced from `CURRENT_core_metadata_dictionary.xlsx`. One row per (`lake_table_name`, `lake_variable_name`, `source_type`).
 
 **Key Columns:**
-- `schema_version`, `effective_from`, `effective_to`
-- `lake_table_name`, `lake_variable_name`
-- `data_type`, `udt_name`, `is_nullable`, `is_required`, `is_primary_key`
-- `is_active`, `synced_at`, `created_at`, `created_by`
+- `lake_table_name`, `lake_variable_name`, `source_type`
+- `data_type`, `target_type`, `is_required`
+- `variable_label`, `variable_definition`, `value_labels`
+- `version_number`, `is_active`, `created_at`, `updated_at`
 
 ### `governance.structure_qc_table`
 

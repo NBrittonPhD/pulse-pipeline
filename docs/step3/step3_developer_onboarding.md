@@ -24,7 +24,7 @@ Before running Step 3:
 
 1. **Step 1 completed**: Source must be registered in `governance.source_registry`
 2. **Step 2 completed**: Files must be ingested with valid `ingest_id` in `governance.batch_log`
-3. **Schema dictionary populated**: `reference/expected_schema_dictionary.xlsx` must contain schema definitions
+3. **Metadata synced**: `reference.metadata` must be populated (run Step 4: `source("r/scripts/4_sync_metadata.R")`)
 
 ---
 
@@ -50,15 +50,21 @@ sync_metadata_first <- FALSE
 
 ## Common Tasks
 
-### Sync Schema from Excel
+### Sync Metadata from Excel
 
-If you've updated `expected_schema_dictionary.xlsx`:
+If you've updated `CURRENT_core_metadata_dictionary.xlsx`:
+
+```r
+source("r/scripts/4_sync_metadata.R")
+```
+
+Or programmatically:
 
 ```r
 source("pulse-init-all.R")
 source("r/reference/sync_metadata.R")
 con <- connect_to_pulse()
-sync_metadata(con, mode = "replace")
+sync_metadata(con, dict_path = "reference/CURRENT_core_metadata_dictionary.xlsx")
 DBI::dbDisconnect(con)
 ```
 
@@ -112,11 +118,11 @@ result$issues           # Tibble with all issue details
 
 | Code | Meaning |
 |------|---------|
-| `SCHEMA_MISSING_COLUMN` | Expected column not found in table |
-| `SCHEMA_UNEXPECTED_COLUMN` | Column exists but not in schema |
+| `SCHEMA_MISSING_COLUMN` | Required column not found in table |
+| `SCHEMA_UNEXPECTED_COLUMN` | Column exists but not in expected schema |
 | `SCHEMA_TYPE_MISMATCH` | Data type differs from expected |
-| `SCHEMA_PK_MISMATCH` | Primary key designation differs |
-| `SCHEMA_COLUMN_ORDER_DRIFT` | Column position differs |
+| `TYPE_TARGET_MISMATCH` | Observed type does not match target staging type |
+| `TYPE_TARGET_MISSING` | No target type defined in type_decision_table |
 
 ---
 
@@ -131,15 +137,15 @@ SELECT * FROM governance.batch_log ORDER BY created_at DESC LIMIT 5;
 
 ### "No active metadata found"
 
-Run sync_metadata to populate `reference.metadata`:
+Run Step 4 to populate `reference.metadata`:
 ```r
-sync_metadata(con, mode = "replace")
+source("r/scripts/4_sync_metadata.R")
 ```
 
 ### "No expected schema for table"
 
-The table isn't defined in `expected_schema_dictionary.xlsx`. Either:
-1. Add the table to the Excel file and re-sync
+The table isn't defined in `CURRENT_core_metadata_dictionary.xlsx` for this source type. Either:
+1. Add the table/variable to the Excel dictionary and re-sync (Step 4)
 2. Or this is expected (unmapped source table)
 
 ---
@@ -152,7 +158,7 @@ The table isn't defined in `expected_schema_dictionary.xlsx`. Either:
 | Step function | `r/steps/validate_schema.R` |
 | Field comparison | `r/utilities/compare_fields.R` |
 | Metadata sync | `r/reference/sync_metadata.R` |
-| Schema definitions | `reference/expected_schema_dictionary.xlsx` |
-| Metadata DDL | `sql/ddl/create_METADATA.sql` |
+| Metadata dictionary | `reference/CURRENT_core_metadata_dictionary.xlsx` |
+| Metadata DDL | `sql/ddl/recreate_METADATA_v2.sql` |
 | QC table DDL | `sql/ddl/create_STRUCTURE_QC_TABLE.sql` |
 | Unit tests | `tests/testthat/test_step3_schema_validation.R` |

@@ -103,7 +103,8 @@ The pipeline uses five PostgreSQL schemas:
 
 | Table | Purpose |
 |-------|---------|
-| `reference.metadata` | Expected schema definitions (synced from Excel dictionary) |
+| `reference.metadata` | Dictionary definitions synced from core metadata dictionary (version-controlled, soft deletes) |
+| `reference.metadata_history` | Field-level change audit trail across metadata versions |
 | `reference.ingest_dictionary` | Source-to-lake column mapping and harmonization rules |
 
 ### Reference Files (Pipeline Inputs)
@@ -112,8 +113,8 @@ The `reference/` directory contains governed metadata files that drive pipeline 
 
 | File | Location | Purpose | Consumed By |
 |------|----------|---------|-------------|
-| `CURRENT_core_metadata_dictionary.xlsx` | `reference/` | Master dictionary of all expected lake table variables, data types, and requirements. Upstream source maintained by data stewards. | Manually reviewed; serves as the governed source for `expected_schema_dictionary.xlsx` |
-| `expected_schema_dictionary.xlsx` | `reference/` | Expected schema definitions for all lake tables. One row per variable per table per schema version. Synced to the `reference.metadata` database table by `sync_metadata()`. | Step 3 schema validation (via `reference.metadata` DB table) |
+| `CURRENT_core_metadata_dictionary.xlsx` | `reference/` | Master dictionary of all expected lake table variables, data types, and requirements. Upstream source maintained by data stewards. Synced to `reference.metadata` by Step 4 (`sync_metadata()`). | Step 4 metadata sync (via `reference.metadata` DB table) |
+| `expected_schema_dictionary.xlsx` | `reference/` | Legacy expected schema definitions built by `build_expected_schema_dictionary()`. Retained for reference; not consumed by Step 3 validation (which now reads `reference.metadata` directly). | Orphaned — flag for cleanup |
 | `ingest_dictionary.xlsx` | `reference/` | Maps source file columns to lake table/variable names. Defines which source files map to which raw tables and how columns are harmonized. Synced to `reference.ingest_dictionary` database table. | Step 2 ingestion (`get_ingest_dict()`, `ingest_one_file()`) |
 | `type_decision_table.xlsx` | `reference/type_decisions/` | Human-reviewed target SQL types for each variable. Defines what data type each column should be coerced to in the staging schema. Joined onto the expected schema during dictionary building. | Step 3A schema builder (`build_expected_schema_dictionary()`), Step 3 validation (`compare_fields()`) |
 | `decision_note_reference.xlsx` | `reference/type_decisions/` | Companion notes explaining the rationale behind type decisions. Not consumed by any code — serves as governance documentation for auditors and data stewards. | Human reference only |
@@ -291,7 +292,7 @@ The `source_type` is derived automatically from `reference.ingest_dictionary` by
 
 ### Step 3: Schema Validation Engine
 
-**Purpose:** Validate raw table schemas against expected metadata definitions before harmonization begins. Identifies missing columns, unexpected columns, type mismatches, primary key discrepancies, and column order drift. Writes all issues to a governed QC table.
+**Purpose:** Validate raw table schemas against expected metadata definitions before harmonization begins. Identifies missing columns, unexpected columns, type mismatches, and target type discrepancies. Filters expected schema by source type to avoid cross-source false positives. Writes all issues to a governed QC table.
 
 **How to run:**
 
@@ -315,7 +316,8 @@ flowchart TD
     D --> I[validate_schema]
     I --> J[Verify ingest_id in batch_log]
     J --> K[Load expected schema from reference.metadata]
-    K --> L[Get raw tables from ingest_file_log]
+    K --> K2[Filter by source_type]
+    K2 --> L[Get raw tables from ingest_file_log]
 
     L --> M[For each raw table]
     M --> N[Query observed columns from information_schema]
@@ -339,10 +341,8 @@ flowchart TD
 |------|---------|
 | `r/scripts/3_validate_schema.R` | User-facing wrapper script |
 | `r/steps/validate_schema.R` | Core validation logic |
-| `r/utilities/compare_fields.R` | Pure comparison function (detects 6 issue types) |
-| `r/reference/sync_metadata.R` | Syncs expected schema from Excel to database |
-| `r/reference/build_expected_schema_dictionary.R` | Builds schema dictionary from Postgres metadata |
-| `r/steps/run_step3_build_expected_schema_dictionary.R` | Schema builder wrapper |
+| `r/utilities/compare_fields.R` | Pure comparison function (detects 5 issue types) |
+| `r/reference/sync_metadata.R` | Syncs core metadata dictionary from Excel to database (Step 4) |
 | `sql/ddl/create_STRUCTURE_QC_TABLE.sql` | DDL for the QC issues table |
 
 **Database reads:**
@@ -367,8 +367,6 @@ flowchart TD
 | `SCHEMA_MISSING_COLUMN` | critical | Required column absent from raw table |
 | `SCHEMA_UNEXPECTED_COLUMN` | critical | Column exists in raw but not in expected schema |
 | `SCHEMA_TYPE_MISMATCH` | warning | Data type differs between expected and observed |
-| `SCHEMA_PK_MISMATCH` | critical | Primary key flag differs |
-| `SCHEMA_COLUMN_ORDER_DRIFT` | info | Column ordinal position differs |
 | `TYPE_TARGET_MISMATCH` | warning | Observed type does not match target staging type |
 | `TYPE_TARGET_MISSING` | warning | No target type defined in type_decision_table |
 
@@ -378,16 +376,15 @@ flowchart TD
 |----------|----------|
 | `critical` | Blocks execution if `halt_on_error = TRUE` |
 | `warning` | Logged but does not block |
-| `info` | Informational only |
 
 **User inputs:**
 
 | Parameter | Example | Description |
 |-----------|---------|-------------|
 | `ingest_id` | `ING_cisir2026_toy_20260128_170000` | Must match an existing batch from Step 2 |
-| `source_type` | `CISIR` | For logging purposes |
+| `source_type` | `CISIR` | Filters expected schema to this source; auto-derived if NULL |
 | `halt_on_error` | `TRUE` | Stop execution on critical issues |
-| `sync_metadata_first` | `FALSE` | Re-sync Excel dictionary to database before validating |
+| `sync_metadata_first` | `FALSE` | Re-sync core metadata dictionary to database before validating |
 
 **Reviewing issues after validation:**
 
@@ -396,6 +393,79 @@ SELECT * FROM governance.structure_qc_table
 WHERE ingest_id = 'ING_cisir2026_toy_20260128_170000'
 ORDER BY severity DESC, lake_table_name, lake_variable_name;
 ```
+
+---
+
+### Step 4: Metadata Synchronization
+
+**Purpose:** Synchronize the core metadata dictionary from Excel to the database with full version tracking and field-level audit trail. Compares the new dictionary against the current database state, detects adds/updates/removes at the field level, writes change history, and upserts `reference.metadata` with a new version number.
+
+**How to run:**
+
+```r
+source("r/scripts/4_sync_metadata.R")
+```
+
+**Execution flow:**
+
+```mermaid
+flowchart TD
+    A[User runs 4_sync_metadata.R] --> B[pulse-init-all.R]
+    B --> C[connect_to_pulse]
+    C --> D[sync_metadata]
+    D --> E[load_metadata_dictionary: Excel to tibble]
+    D --> F[Query current reference.metadata]
+    E --> G[compare_metadata: field-level diff]
+    F --> G
+    G --> H[Determine next version_number]
+    H --> I[Write changes to reference.metadata_history]
+    I --> J[Upsert reference.metadata]
+    J --> K[Soft-delete removed variables]
+    J --> L[Write audit_log event]
+    L --> M[Return summary]
+```
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `r/scripts/4_sync_metadata.R` | User-facing wrapper script |
+| `r/reference/sync_metadata.R` | Core sync orchestrator |
+| `r/reference/load_metadata_dictionary.R` | Loads and standardizes Excel dictionary |
+| `r/utilities/compare_metadata.R` | Field-level dictionary comparison |
+| `r/reference/get_current_metadata_version.R` | Helper to get current version number |
+| `sql/ddl/recreate_METADATA_v2.sql` | DDL for the dictionary-based metadata table |
+| `sql/ddl/create_METADATA_HISTORY.sql` | DDL for the change history table |
+
+**Database reads:**
+
+| Table | Purpose |
+|-------|---------|
+| `reference.metadata` | Current dictionary state (for comparison) |
+
+**Database writes:**
+
+| Table | Action |
+|-------|--------|
+| `reference.metadata` | UPSERT (insert new, update existing, soft-delete removed) |
+| `reference.metadata_history` | INSERT one row per field changed (append-only) |
+| `governance.audit_log` | INSERT metadata_sync event |
+
+**Change types detected by `compare_metadata()`:**
+
+| Change Type | Description |
+|-------------|-------------|
+| `INITIAL` | First sync — all variables are new |
+| `ADD` | Variable exists in new dictionary but not in current DB |
+| `UPDATE` | Variable exists in both but a field value differs |
+| `REMOVE` | Variable exists in current DB but not in new dictionary |
+
+**User inputs:**
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `dict_path` | `reference/CURRENT_core_metadata_dictionary.xlsx` | Path to the metadata dictionary Excel file |
+| `source_type_filter` | `NULL` | Optional filter to sync only one source type |
 
 ---
 
@@ -415,7 +485,8 @@ pulse-pipeline/
 │   ├── scripts/                       # User-facing wrapper scripts
 │   │   ├── 1_onboard_new_source.R
 │   │   ├── 2_ingest_and_log_files.R
-│   │   └── 3_validate_schema.R
+│   │   ├── 3_validate_schema.R
+│   │   └── 4_sync_metadata.R
 │   │
 │   ├── steps/                         # Core step functions
 │   │   ├── register_source.R
@@ -429,6 +500,7 @@ pulse-pipeline/
 │   │
 │   ├── utilities/                     # Reusable helper functions
 │   │   ├── compare_fields.R
+│   │   ├── compare_metadata.R
 │   │   ├── create_source_folders.R
 │   │   ├── load_source_params.R
 │   │   ├── normalize_names.R
@@ -437,6 +509,8 @@ pulse-pipeline/
 │   │
 │   ├── reference/                     # Metadata management
 │   │   ├── build_expected_schema_dictionary.R
+│   │   ├── get_current_metadata_version.R
+│   │   ├── load_metadata_dictionary.R
 │   │   ├── sync_metadata.R
 │   │   └── run_sync_metadata.R
 │   │
@@ -480,6 +554,8 @@ pulse-pipeline/
 │   │   ├── create_INGEST_FILE_LOG_index_1.sql
 │   │   ├── create_INGEST_FILE_LOG_index_2.sql
 │   │   ├── create_METADATA.sql
+│   │   ├── recreate_METADATA_v2.sql
+│   │   ├── create_METADATA_HISTORY.sql
 │   │   ├── create_STRUCTURE_QC_TABLE.sql
 │   │   └── create_RULE_LIBRARY.sql
 │   │
@@ -495,6 +571,7 @@ pulse-pipeline/
 │       ├── test_step1_integration.R
 │       ├── test_step2_batch_logging.R
 │       ├── test_step3_schema_validation.R
+│       ├── test_step4_metadata_sync.R
 │       └── helper_pulse_step1.R
 │
 ├── docs/                              # Step documentation and SOPs
@@ -512,12 +589,14 @@ pulse-pipeline/
 │   │   ├── step2_function_atlas.md
 │   │   ├── step2_governance.md
 │   │   └── step2_sop_summary.md
-│   └── step3/
-│       ├── step3_cluster3_snapshot.json
-│       ├── step3_developer_onboarding.md
-│       ├── step3_function_atlas.md
-│       ├── step3_governance.md
-│       └── step3_sop_summary.md
+│   ├── step3/
+│   │   ├── step3_cluster3_snapshot.json
+│   │   ├── step3_developer_onboarding.md
+│   │   ├── step3_function_atlas.md
+│   │   ├── step3_governance.md
+│   │   └── step3_sop_summary.md
+│   └── step4/
+│       └── (see claude/CLAUDE_STEP4_METADATA_SYNC.md)
 │
 ├── reference/                         # Pipeline input dictionaries (tracked in git)
 │   ├── CURRENT_core_metadata_dictionary.xlsx
@@ -631,6 +710,7 @@ testthat::test_dir("tests/testthat/")
 testthat::test_file("tests/testthat/test_step1_register_source.R")
 testthat::test_file("tests/testthat/test_step2_batch_logging.R")
 testthat::test_file("tests/testthat/test_step3_schema_validation.R")
+testthat::test_file("tests/testthat/test_step4_metadata_sync.R")
 ```
 
 Tests require a running PostgreSQL instance with the PULSE database bootstrapped.
