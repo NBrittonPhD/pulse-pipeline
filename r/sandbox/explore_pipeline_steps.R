@@ -8,7 +8,7 @@
 #   understanding the overall pipeline configuration.
 #
 # Usage:
-#   source("r/explore/explore_pipeline_steps.R")
+#   source("r/sandbox/explore_pipeline_steps.R")
 #   con <- connect_to_pulse()
 #   explore_pipeline_steps(con)                       # All steps, ordered
 #   explore_pipeline_steps(con, enabled_only = TRUE)  # Only enabled steps

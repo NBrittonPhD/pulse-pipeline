@@ -37,3 +37,10 @@ CREATE TABLE IF NOT EXISTS governance.ingest_file_log (
     logged_at_utc      TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     completed_at_utc   TIMESTAMP WITHOUT TIME ZONE
 );
+
+-- Indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_ingest_file_log_ingest_id
+    ON governance.ingest_file_log (ingest_id);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_file_log_lake_table
+    ON governance.ingest_file_log (lake_table_name);

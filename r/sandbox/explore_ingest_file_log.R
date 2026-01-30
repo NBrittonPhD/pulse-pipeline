@@ -8,7 +8,7 @@
 #   Step 2 output at the file level and tracing data provenance.
 #
 # Usage:
-#   source("r/explore/explore_ingest_file_log.R")
+#   source("r/sandbox/explore_ingest_file_log.R")
 #   con <- connect_to_pulse()
 #   explore_ingest_file_log(con, ingest_id = "ING_tr2026_test_20251209_120000")
 #   explore_ingest_file_log(con, load_status = "error")       # Failed files

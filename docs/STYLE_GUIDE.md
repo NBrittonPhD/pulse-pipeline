@@ -64,7 +64,7 @@ reference/           # Pipeline input dictionaries (tracked in git)
   type_decisions/    # Type governance files (type_decision_table, decision notes)
   archive/           # Timestamped prior versions of metadata dictionaries
 output/
-  profiling/         # Data profiling outputs from r/explore/ (tracked in git)
+  profiling/         # Data profiling outputs from r/sandbox/ (tracked in git)
 raw/                 # Raw data zone (not tracked in git)
 staging/             # Staging zone (not tracked in git)
 validated/           # Validated zone (not tracked in git)

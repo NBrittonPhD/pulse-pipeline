@@ -1,5 +1,5 @@
 # =============================================================================
-# r/explore/run_extract_categorical_values.R
+# r/sandbox/run_extract_categorical_values.R
 # =============================================================================
 # Runner script to extract categorical values from raw.* tables
 #
@@ -31,7 +31,7 @@ suppressPackageStartupMessages({
 
 # Source functions
 source(file.path(proj_root, "r/connect_to_pulse.R"))
-source(file.path(proj_root, "r/explore/extract_categorical_values.R"))
+source(file.path(proj_root, "r/sandbox/extract_categorical_values.R"))
 
 # =============================================================================
 # RUN EXTRACTION

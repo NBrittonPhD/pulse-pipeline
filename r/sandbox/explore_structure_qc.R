@@ -9,7 +9,7 @@
 #   proceeding to downstream steps.
 #
 # Usage:
-#   source("r/explore/explore_structure_qc.R")
+#   source("r/sandbox/explore_structure_qc.R")
 #   con <- connect_to_pulse()
 #   explore_structure_qc(con, ingest_id = "ING_tr2026_test_20251209_120000")
 #   explore_structure_qc(con, severity = "critical")            # Critical only

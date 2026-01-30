@@ -95,8 +95,8 @@ derive_ingest_dictionary <- function(core_dict_path = NULL,
   if (length(missing_cols) > 0) {
     if ("source_table_name" %in% missing_cols) {
       stop("[derive_ingest_dictionary] ERROR: Core dict is missing ",
-           "'source_table_name' column. Run the migration first:\n",
-           "  source(\"r/reference/run_migrate_source_table_name.R\")")
+           "'source_table_name' column. Ensure the dictionary Excel file ",
+           "includes a 'source_table_name' column.")
     }
     stop("[derive_ingest_dictionary] ERROR: Core dict missing required ",
          "columns: ", paste(missing_cols, collapse = ", "))

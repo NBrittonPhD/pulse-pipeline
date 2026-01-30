@@ -6,7 +6,7 @@
 #   Useful for finding the ingest_id to use in Step 3 and beyond.
 #
 # Usage:
-#   source("r/explore/list_ingests.R")
+#   source("r/sandbox/list_ingests.R")
 #   con <- connect_to_pulse()
 #   list_ingests(con)                        # Most recent 10
 #   list_ingests(con, n = 20)                # Most recent 20

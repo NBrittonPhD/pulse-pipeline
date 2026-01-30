@@ -30,11 +30,17 @@ validated/
 !reference/archive/*.xlsx
 !reference/type_decisions/*.xlsx
 
-# Allow output profiling files to be tracked
-!output/profiling/*.csv
+# Runtime artifacts
+config/source_params.yml
 
 # Excel temp lock files
 ~$*
+
+# Claude Code — build specifications and session artifacts
+CLAUDE.md
+claude/
+claude.zip
+.claude/
 
 # Outputs
 qc_output/

@@ -9,7 +9,7 @@
 #   was loaded correctly and understanding source-to-lake field mappings.
 #
 # Usage:
-#   source("r/explore/explore_ingest_dictionary.R")
+#   source("r/sandbox/explore_ingest_dictionary.R")
 #   con <- connect_to_pulse()
 #   explore_ingest_dictionary(con)                                # All mappings
 #   explore_ingest_dictionary(con, lake_table = "cisir_vitals")   # One table

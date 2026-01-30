@@ -8,7 +8,7 @@
 #   finding ingest_id values for downstream steps.
 #
 # Usage:
-#   source("r/explore/explore_batch_log.R")
+#   source("r/sandbox/explore_batch_log.R")
 #   con <- connect_to_pulse()
 #   explore_batch_log(con)                                  # Most recent 20
 #   explore_batch_log(con, source_id = "tr2026")            # Filter by source

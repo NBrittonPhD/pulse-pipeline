@@ -7,7 +7,7 @@
 #   debugging, confirming step execution, and governance audits.
 #
 # Usage:
-#   source("r/explore/explore_audit_log.R")
+#   source("r/sandbox/explore_audit_log.R")
 #   con <- connect_to_pulse()
 #   explore_audit_log(con)                                     # Most recent 20
 #   explore_audit_log(con, n = 50)                             # More rows

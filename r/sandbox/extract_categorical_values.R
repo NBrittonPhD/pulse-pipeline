@@ -1,5 +1,5 @@
 # =============================================================================
-# r/explore/extract_categorical_values.R
+# r/sandbox/extract_categorical_values.R
 # =============================================================================
 # PURPOSE
 #   Extract DISTINCT values for categorical variables from raw.* tables
@@ -7,7 +7,7 @@
 #
 # USAGE
 #   source("r/connect_to_pulse.R")
-#   source("r/explore/extract_categorical_values.R")
+#   source("r/sandbox/extract_categorical_values.R")
 #
 #   con <- connect_to_pulse()
 #   results <- extract_categorical_values(con)

@@ -7,7 +7,7 @@
 #   active, and confirming source_id values before running downstream steps.
 #
 # Usage:
-#   source("r/explore/explore_source_registry.R")
+#   source("r/sandbox/explore_source_registry.R")
 #   con <- connect_to_pulse()
 #   explore_source_registry(con)                          # All sources
 #   explore_source_registry(con, active_only = TRUE)      # Active only

@@ -9,7 +9,7 @@
 #   understanding what Step 3 validates against.
 #
 # Usage:
-#   source("r/explore/explore_metadata.R")
+#   source("r/sandbox/explore_metadata.R")
 #   con <- connect_to_pulse()
 #   explore_metadata(con)                                       # All active
 #   explore_metadata(con, lake_table = "cisir_vitals")          # One table
