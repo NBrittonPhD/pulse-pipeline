@@ -22,7 +22,7 @@ This pipeline ingests clinical data from multiple sources (CISIR, CLARITY, TRAUM
 | 2 | Batch Logging & Ingestion | ✅ Complete | `docs/step2/` |
 | 3 | Schema Validation | ✅ Complete | `docs/step3/` |
 | 4 | Metadata Synchronization | ✅ Complete | `docs/step4/` |
-| 5 | Data Profiling (raw.*) | 🔲 Not Started | `claude/CLAUDE_STEP5_DATA_PROFILING.md` |
+| 5 | Data Profiling (raw.*) | ✅ Complete | `docs/step5/` |
 | 6 | Harmonization (staging.* → validated.*) | 🔲 Not Started | `claude/CLAUDE_STEP6_HARMONIZATION.md` |
 | 7 | QC Rule Execution | 🔲 Not Started | `claude/CLAUDE_STEP7_QC_RULES.md` |
 | 8 | QC Dashboard | 🔲 Not Started | `claude/CLAUDE_STEP8_QC_DASHBOARD.md` |

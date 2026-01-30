@@ -1,0 +1,147 @@
+{
+  "version": "step5_cluster5_snapshot_v1",
+  "description": "PULSE pipeline Step 5 x Cluster 5 (Data Profiling) -- code + structure snapshot.",
+  "schemas": {
+    "governance": "governance"
+  },
+  "db_objects": {
+    "tables": [
+      {
+        "name": "governance.data_profile",
+        "purpose": "Variable-level missingness profiling. One row per column per table per ingest.",
+        "ddl_file": "sql/ddl/create_DATA_PROFILE.sql",
+        "key_columns": ["profile_id", "ingest_id", "schema_name", "table_name", "variable_name", "inferred_type", "total_count", "valid_count", "na_count", "empty_count", "whitespace_count", "sentinel_count", "na_pct", "empty_pct", "whitespace_pct", "sentinel_pct", "total_missing_count", "total_missing_pct", "valid_pct", "unique_count", "unique_pct", "profiled_at"]
+      },
+      {
+        "name": "governance.data_profile_distribution",
+        "purpose": "Distribution statistics. One row per column per table per ingest. Numeric stats or categorical top values.",
+        "ddl_file": "sql/ddl/create_DATA_PROFILE_DISTRIBUTION.sql",
+        "key_columns": ["distribution_id", "ingest_id", "schema_name", "table_name", "variable_name", "distribution_type", "stat_min", "stat_max", "stat_mean", "stat_median", "stat_sd", "stat_q25", "stat_q75", "stat_iqr", "top_values_json", "mode_value", "mode_count", "mode_pct"]
+      },
+      {
+        "name": "governance.data_profile_sentinel",
+        "purpose": "Detected sentinel/placeholder values. Zero or more rows per column.",
+        "ddl_file": "sql/ddl/create_DATA_PROFILE_SENTINEL.sql",
+        "key_columns": ["sentinel_id", "ingest_id", "schema_name", "table_name", "variable_name", "sentinel_value", "sentinel_count", "sentinel_pct", "detection_method", "confidence"]
+      },
+      {
+        "name": "governance.data_profile_issue",
+        "purpose": "Quality issues flagged during profiling. Zero or more rows per column.",
+        "ddl_file": "sql/ddl/create_DATA_PROFILE_ISSUE.sql",
+        "key_columns": ["issue_id", "ingest_id", "schema_name", "table_name", "variable_name", "issue_type", "severity", "description", "value", "recommendation"]
+      },
+      {
+        "name": "governance.data_profile_summary",
+        "purpose": "Per-table quality summary. One row per table per ingest.",
+        "ddl_file": "sql/ddl/create_DATA_PROFILE_SUMMARY.sql",
+        "key_columns": ["summary_id", "ingest_id", "schema_name", "table_name", "row_count", "variable_count", "avg_valid_pct", "min_valid_pct", "max_missing_pct", "critical_issue_count", "warning_issue_count", "info_issue_count", "quality_score", "worst_variable", "worst_variable_missing_pct"]
+      }
+    ]
+  },
+  "functions": [
+    {
+      "name": "profile_data",
+      "file": "r/steps/profile_data.R",
+      "category": "step_logic",
+      "description": "Step 5 orchestrator: load config, verify ingest, profile each table, write to 5 governance tables, compute overall score, log audit event.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbWriteTable", "DBI::dbExecute", "load_profiling_config", "profile_table", "write_audit_event", "dplyr", "glue"],
+      "called_by": ["5_profile_data.R", "tests"]
+    },
+    {
+      "name": "profile_table",
+      "file": "r/profiling/profile_table.R",
+      "category": "profiling",
+      "description": "Profile all columns of a single table. Calls leaf functions, aggregates into 5 tibbles. NO database writes.",
+      "calls": ["DBI::dbGetQuery", "infer_column_type", "detect_sentinels", "profile_missingness", "profile_distribution", "generate_issues", "calculate_quality_score", "dplyr", "tibble"],
+      "called_by": ["profile_data", "tests"]
+    },
+    {
+      "name": "detect_sentinels",
+      "file": "r/profiling/detect_sentinels.R",
+      "category": "profiling",
+      "description": "Detect sentinel/placeholder values using config-based matching (high confidence) and frequency analysis (medium confidence).",
+      "calls": ["dplyr", "tibble"],
+      "called_by": ["profile_table", "tests"]
+    },
+    {
+      "name": "profile_missingness",
+      "file": "r/profiling/profile_missingness.R",
+      "category": "profiling",
+      "description": "Classify each value into exactly one of 5 mutually exclusive categories: NA, empty, whitespace, sentinel, valid.",
+      "calls": ["base R only"],
+      "called_by": ["profile_table", "tests"]
+    },
+    {
+      "name": "profile_distribution",
+      "file": "r/profiling/profile_distribution.R",
+      "category": "profiling",
+      "description": "Compute distribution stats: numeric (min/max/mean/median/sd/quartiles) or categorical (top-N JSON, mode).",
+      "calls": ["jsonlite"],
+      "called_by": ["profile_table", "tests"]
+    },
+    {
+      "name": "generate_issues",
+      "file": "r/profiling/generate_issues.R",
+      "category": "profiling",
+      "description": "Flag quality issues: identifier_missing, high_missingness, moderate_missingness, constant_value, high_cardinality.",
+      "calls": ["tibble", "glue", "dplyr"],
+      "called_by": ["profile_table", "tests"]
+    },
+    {
+      "name": "calculate_quality_score",
+      "file": "r/profiling/calculate_quality_score.R",
+      "category": "profiling",
+      "description": "Rate table quality as Excellent/Good/Fair/Needs Review based on max missing pct and critical issue count.",
+      "calls": ["base R only"],
+      "called_by": ["profile_table", "tests"]
+    },
+    {
+      "name": "load_profiling_config",
+      "file": "r/utilities/load_profiling_config.R",
+      "category": "utility",
+      "description": "Load profiling config from YAML with hardcoded defaults. Works even if YAML file is missing.",
+      "calls": ["yaml"],
+      "called_by": ["profile_data", "tests"]
+    },
+    {
+      "name": "infer_column_type",
+      "file": "r/utilities/infer_column_type.R",
+      "category": "utility",
+      "description": "Classify TEXT column as identifier/numeric/date/categorical by name patterns and value parsing.",
+      "calls": ["base R only"],
+      "called_by": ["profile_table", "tests"]
+    }
+  ],
+  "scripts": [
+    {
+      "path": "r/scripts/5_profile_data.R",
+      "purpose": "Human-friendly Step 5 entry: set ingest_id and schema, call profile_data(), print quality summary."
+    }
+  ],
+  "config_files": [
+    {
+      "path": "config/profiling_settings.yml",
+      "purpose": "Profiling thresholds, sentinel lists, identifier patterns, display settings."
+    }
+  ],
+  "tests": {
+    "unit": "tests/testthat/test_step5_data_profiling.R",
+    "status": "all_pass",
+    "count": "168 PASS, 0 FAIL"
+  },
+  "step5_status": {
+    "ddl_created": true,
+    "config_created": true,
+    "functions_implemented": true,
+    "type_inference_working": true,
+    "sentinel_detection_working": true,
+    "missingness_profiling_working": true,
+    "distribution_stats_working": true,
+    "issue_generation_working": true,
+    "quality_scoring_working": true,
+    "idempotency_working": true,
+    "audit_trail_working": true,
+    "unit_tests_pass": true,
+    "integration_tests_pass": true
+  }
+}

@@ -2,7 +2,7 @@
 
 A metadata-driven, automated data lake pipeline for PRIME-AI's PULSE governance framework.
 
-Built in R and PostgreSQL, the pipeline ingests raw CSV data from multiple clinical sources, validates schemas against governed metadata definitions, and tracks every action through a comprehensive audit trail.
+Built in R and PostgreSQL, the pipeline ingests raw CSV data from multiple clinical sources, validates schemas against governed metadata definitions, synchronizes metadata dictionaries, profiles data quality, and tracks every action through a comprehensive audit trail.
 
 ---
 
@@ -57,7 +57,7 @@ This creates the `governance`, `reference`, `raw`, `staging`, and `validated` sc
 
 ## Quick Start
 
-After setting environment variables and bootstrapping the database, run the pipeline in three steps:
+After setting environment variables and bootstrapping the database, run the pipeline steps in order:
 
 ```r
 # Step 1: Register a new data source
@@ -68,6 +68,12 @@ source("r/scripts/2_ingest_and_log_files.R")
 
 # Step 3: Validate raw table schemas against expected metadata
 source("r/scripts/3_validate_schema.R")
+
+# Step 4: Synchronize metadata dictionary from Excel to database
+source("r/scripts/4_sync_metadata.R")
+
+# Step 5: Profile raw data quality (missingness, distributions, sentinels, issues)
+source("r/scripts/5_profile_data.R")
 ```
 
 Each script has a **USER INPUT SECTION** at the top where you set parameters like `source_id`, `ingest_id`, and `source_type`.
@@ -82,7 +88,7 @@ The pipeline uses five PostgreSQL schemas:
 
 | Schema | Purpose |
 |--------|---------|
-| `governance` | Pipeline control, audit trail, batch lineage, QC issues |
+| `governance` | Pipeline control, audit trail, batch lineage, QC issues, data profiling |
 | `reference` | Expected schema definitions, ingest dictionaries, metadata |
 | `raw` | Landing zone for ingested data (one table per source file type) |
 | `staging` | Intermediate tables for transformation (future steps) |
@@ -93,11 +99,16 @@ The pipeline uses five PostgreSQL schemas:
 | Table | Purpose | Created By |
 |-------|---------|------------|
 | `governance.source_registry` | Registered data sources and their metadata | Step 1 |
-| `governance.audit_log` | Governed event trail (registrations, ingests, validations) | Step 1 |
+| `governance.audit_log` | Governed event trail (registrations, ingests, validations, profiling) | Step 1 |
 | `governance.pipeline_step` | Ordered step definitions for pipeline orchestration | Bootstrap |
 | `governance.batch_log` | One row per ingest batch (status, file counts, timestamps) | Step 2 |
 | `governance.ingest_file_log` | One row per ingested file (checksum, row count, load status) | Step 2 |
 | `governance.structure_qc_table` | Schema validation issues (missing/extra/mismatched fields) | Step 3 |
+| `governance.data_profile` | Variable-level missingness profiling (NA, empty, whitespace, sentinel, valid) | Step 5 |
+| `governance.data_profile_distribution` | Distribution statistics (numeric stats, categorical top values as JSON) | Step 5 |
+| `governance.data_profile_sentinel` | Detected sentinel/placeholder values with detection method and confidence | Step 5 |
+| `governance.data_profile_issue` | Quality issues flagged at critical/warning/info severity | Step 5 |
+| `governance.data_profile_summary` | Per-table quality scores (Excellent, Good, Fair, Needs Review) | Step 5 |
 
 ### Reference Tables
 
@@ -114,21 +125,21 @@ The `reference/` directory contains governed metadata files that drive pipeline 
 | File | Location | Purpose | Consumed By |
 |------|----------|---------|-------------|
 | `CURRENT_core_metadata_dictionary.xlsx` | `reference/` | Master dictionary of all expected lake table variables, data types, and requirements. Upstream source maintained by data stewards. Synced to `reference.metadata` by Step 4 (`sync_metadata()`). | Step 4 metadata sync (via `reference.metadata` DB table) |
-| `expected_schema_dictionary.xlsx` | `reference/` | Legacy expected schema definitions built by `build_expected_schema_dictionary()`. Retained for reference; not consumed by Step 3 validation (which now reads `reference.metadata` directly). | Orphaned — flag for cleanup |
+| `expected_schema_dictionary.xlsx` | `reference/` | Legacy expected schema definitions built by `build_expected_schema_dictionary()`. Retained for reference; not consumed by Step 3 validation (which now reads `reference.metadata` directly). | Orphaned -- flag for cleanup |
 | `ingest_dictionary.xlsx` | `reference/` | Maps source file columns to lake table/variable names. Defines which source files map to which raw tables and how columns are harmonized. Synced to `reference.ingest_dictionary` database table. | Step 2 ingestion (`get_ingest_dict()`, `ingest_one_file()`) |
 | `type_decision_table.xlsx` | `reference/type_decisions/` | Human-reviewed target SQL types for each variable. Defines what data type each column should be coerced to in the staging schema. Joined onto the expected schema during dictionary building. | Step 3A schema builder (`build_expected_schema_dictionary()`), Step 3 validation (`compare_fields()`) |
-| `decision_note_reference.xlsx` | `reference/type_decisions/` | Companion notes explaining the rationale behind type decisions. Not consumed by any code — serves as governance documentation for auditors and data stewards. | Human reference only |
+| `decision_note_reference.xlsx` | `reference/type_decisions/` | Companion notes explaining the rationale behind type decisions. Not consumed by any code -- serves as governance documentation for auditors and data stewards. | Human reference only |
 
 Prior versions of the core metadata dictionary are preserved in `reference/archive/` with timestamps in the filename.
 
-### Profiling Outputs (Pipeline Outputs)
+### Exploratory Outputs (Pipeline Outputs)
 
-The `output/profiling/` directory contains artifacts generated by exploratory scripts in `r/explore/`. These are **outputs of analysis**, not inputs to the pipeline.
+The `output/profiling/` directory contains artifacts generated by ad-hoc scripts in `r/sandbox/`. These are **outputs of analysis**, not inputs to the pipeline.
 
 | File | Purpose | Generated By |
 |------|---------|--------------|
-| `categorical_values.csv` | Distinct values for categorical variables across raw tables. One row per variable-table combination with value counts and constrained/unconstrained status. | `r/explore/run_extract_categorical_values.R` |
-| `categorical_values_consolidated.csv` | Consolidated view of categorical values per variable (combined across all tables). One row per variable. | `r/explore/run_extract_categorical_values.R` |
+| `categorical_values.csv` | Distinct values for categorical variables across raw tables. One row per variable-table combination with value counts and constrained/unconstrained status. | `r/sandbox/run_extract_categorical_values.R` |
+| `categorical_values_consolidated.csv` | Consolidated view of categorical values per variable (combined across all tables). One row per variable. | `r/sandbox/run_extract_categorical_values.R` |
 | `raw_ingest_profile.csv` | Structural metadata snapshot of raw tables. Documents which variables exist in which tables, used as reference for building the categorical extraction mapping. | Data profiling analysis |
 
 ### Raw Tables
@@ -455,7 +466,7 @@ flowchart TD
 
 | Change Type | Description |
 |-------------|-------------|
-| `INITIAL` | First sync — all variables are new |
+| `INITIAL` | First sync -- all variables are new |
 | `ADD` | Variable exists in new dictionary but not in current DB |
 | `UPDATE` | Variable exists in both but a field value differs |
 | `REMOVE` | Variable exists in current DB but not in new dictionary |
@@ -469,6 +480,137 @@ flowchart TD
 
 ---
 
+### Step 5: Data Profiling
+
+**Purpose:** Profile all raw tables from a given ingest batch to assess data quality before harmonization. Computes missingness breakdowns (NA, empty, whitespace, sentinel, valid), distribution statistics, sentinel value detection, quality issues, and per-table quality scores.
+
+**How to run:**
+
+```r
+source("r/scripts/5_profile_data.R")
+```
+
+**Execution flow:**
+
+```mermaid
+flowchart TD
+    A[User runs 5_profile_data.R] --> B[pulse-init-all.R]
+    B --> C[connect_to_pulse]
+    C --> D[profile_data]
+    D --> E[load_profiling_config]
+    D --> F[Verify ingest_id in batch_log]
+    F --> G[Get tables from ingest_file_log]
+    G --> H[Delete prior profiling data]
+    H --> I[For each raw table]
+    I --> J[profile_table]
+    J --> J1[infer_column_type]
+    J --> J2[detect_sentinels]
+    J --> J3[profile_missingness]
+    J --> J4[profile_distribution]
+    J --> J5[generate_issues]
+    J --> J6[calculate_quality_score]
+    J --> K[Return 5 tibbles]
+    K --> L[Write to governance.data_profile*]
+    L --> M[Compute overall score]
+    M --> N[Write governance.audit_log]
+    N --> O[Return summary]
+```
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `r/scripts/5_profile_data.R` | User-facing wrapper script |
+| `r/steps/profile_data.R` | Step 5 orchestrator |
+| `r/profiling/profile_table.R` | Table-level profiler (composes leaf functions) |
+| `r/profiling/detect_sentinels.R` | Sentinel/placeholder value detection |
+| `r/profiling/profile_missingness.R` | Mutually exclusive missingness classification |
+| `r/profiling/profile_distribution.R` | Numeric and categorical distribution stats |
+| `r/profiling/generate_issues.R` | Quality issue flagging (5 issue types) |
+| `r/profiling/calculate_quality_score.R` | Per-table quality scoring |
+| `r/utilities/load_profiling_config.R` | YAML config loader with defaults |
+| `r/utilities/infer_column_type.R` | Column type inference (identifier, numeric, date, categorical) |
+| `config/profiling_settings.yml` | Thresholds, sentinel lists, identifier patterns |
+| `sql/ddl/create_DATA_PROFILE.sql` | DDL for variable-level profiling table |
+| `sql/ddl/create_DATA_PROFILE_DISTRIBUTION.sql` | DDL for distribution statistics table |
+| `sql/ddl/create_DATA_PROFILE_SENTINEL.sql` | DDL for sentinel detection table |
+| `sql/ddl/create_DATA_PROFILE_ISSUE.sql` | DDL for quality issues table |
+| `sql/ddl/create_DATA_PROFILE_SUMMARY.sql` | DDL for per-table summary table |
+
+**Database reads:**
+
+| Table | Purpose |
+|-------|---------|
+| `governance.batch_log` | Verify ingest_id exists |
+| `governance.ingest_file_log` | Get successfully loaded tables for the batch |
+| `raw.*` | Read table data for profiling |
+
+**Database writes:**
+
+| Table | Action |
+|-------|--------|
+| `governance.data_profile` | DELETE prior + INSERT variable-level missingness |
+| `governance.data_profile_distribution` | DELETE prior + INSERT distribution stats |
+| `governance.data_profile_sentinel` | DELETE prior + INSERT detected sentinels |
+| `governance.data_profile_issue` | DELETE prior + INSERT quality issues |
+| `governance.data_profile_summary` | DELETE prior + INSERT per-table summary |
+| `governance.audit_log` | INSERT data_profiling event |
+
+**Issue types detected by `generate_issues()`:**
+
+| Issue Type | Severity | Trigger |
+|------------|----------|---------|
+| `identifier_missing` | critical | Any missing values in an identifier column |
+| `high_missingness` | warning | >20% total missing (non-identifier) |
+| `moderate_missingness` | info | 10-20% total missing (non-identifier) |
+| `constant_value` | info | Only 1 unique valid value |
+| `high_cardinality` | info | >90% unique values (non-identifier, >10 rows) |
+
+**Quality scores:**
+
+| Score | Max Missing % | Max Critical Issues |
+|-------|---------------|---------------------|
+| Excellent | <=5% | 0 |
+| Good | <=10% | <=2 |
+| Fair | <=20% | <=5 |
+| Needs Review | >20% | >5 |
+
+**User inputs:**
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `ingest_id` | `ING_cisir2026_toy_20260128_170000` | Must match an existing batch from Step 2 |
+| `schema_to_profile` | `raw` | Which schema to profile: `raw` or `staging` |
+| `config_path` | `config/profiling_settings.yml` | Path to profiling config (uses defaults if missing) |
+
+**Reviewing profiling results:**
+
+```sql
+-- Per-table quality scores
+SELECT table_name, quality_score, row_count, variable_count,
+       avg_valid_pct, max_missing_pct, critical_issue_count
+FROM governance.data_profile_summary
+WHERE ingest_id = 'ING_cisir2026_toy_20260128_170000'
+ORDER BY quality_score DESC;
+
+-- Variables with highest missingness
+SELECT table_name, variable_name, inferred_type,
+       total_missing_pct, na_pct, sentinel_pct
+FROM governance.data_profile
+WHERE ingest_id = 'ING_cisir2026_toy_20260128_170000'
+  AND total_missing_pct > 10
+ORDER BY total_missing_pct DESC;
+
+-- All critical and warning issues
+SELECT table_name, variable_name, issue_type, severity, description
+FROM governance.data_profile_issue
+WHERE ingest_id = 'ING_cisir2026_toy_20260128_170000'
+  AND severity IN ('critical', 'warning')
+ORDER BY severity, table_name;
+```
+
+---
+
 ## Directory Structure
 
 ```
@@ -476,6 +618,7 @@ pulse-pipeline/
 │
 ├── config/
 │   ├── pipeline_settings.yml          # Controlled vocabularies, schema list, defaults
+│   ├── profiling_settings.yml         # Data profiling thresholds, sentinel lists, identifier patterns
 │   └── source_params.yml              # Current source parameters (written at runtime)
 │
 ├── r/
@@ -486,7 +629,8 @@ pulse-pipeline/
 │   │   ├── 1_onboard_new_source.R
 │   │   ├── 2_ingest_and_log_files.R
 │   │   ├── 3_validate_schema.R
-│   │   └── 4_sync_metadata.R
+│   │   ├── 4_sync_metadata.R
+│   │   └── 5_profile_data.R
 │   │
 │   ├── steps/                         # Core step functions
 │   │   ├── register_source.R
@@ -496,16 +640,27 @@ pulse-pipeline/
 │   │   ├── run_step2_batch_logging.R
 │   │   ├── validate_schema.R
 │   │   ├── run_step3_build_expected_schema_dictionary.R
+│   │   ├── profile_data.R
 │   │   └── write_audit_event.R
 │   │
 │   ├── utilities/                     # Reusable helper functions
 │   │   ├── compare_fields.R
 │   │   ├── compare_metadata.R
 │   │   ├── create_source_folders.R
+│   │   ├── infer_column_type.R
+│   │   ├── load_profiling_config.R
 │   │   ├── load_source_params.R
 │   │   ├── normalize_names.R
 │   │   ├── validate_source_entry.R
 │   │   └── write_pipeline_step.R
+│   │
+│   ├── profiling/                     # Data quality profiling functions (Step 5)
+│   │   ├── calculate_quality_score.R
+│   │   ├── detect_sentinels.R
+│   │   ├── generate_issues.R
+│   │   ├── profile_distribution.R
+│   │   ├── profile_missingness.R
+│   │   └── profile_table.R
 │   │
 │   ├── reference/                     # Metadata management
 │   │   ├── build_expected_schema_dictionary.R
@@ -524,22 +679,20 @@ pulse-pipeline/
 │   │   ├── read_csv_strict.R
 │   │   └── scalar_helpers.R
 │   │
-│   ├── explore/                       # Read-only inspection tools
-│   │   ├── explore_source_registry.R
-│   │   ├── explore_audit_log.R
-│   │   ├── explore_batch_log.R
-│   │   ├── explore_ingest_file_log.R
-│   │   ├── explore_pipeline_steps.R
-│   │   ├── explore_structure_qc.R
-│   │   ├── explore_metadata.R
-│   │   ├── explore_ingest_dictionary.R
-│   │   ├── list_raw_tables.R
-│   │   ├── list_ingests.R
-│   │   ├── profile_data.R
-│   │   ├── extract_categorical_values.R
-│   │   └── run_extract_categorical_values.R
-│   │
-│   └── prep/                          # Test data generation
+│   └── sandbox/                       # Ad-hoc exploration and test data scripts
+│       ├── explore_source_registry.R
+│       ├── explore_audit_log.R
+│       ├── explore_batch_log.R
+│       ├── explore_ingest_file_log.R
+│       ├── explore_pipeline_steps.R
+│       ├── explore_structure_qc.R
+│       ├── explore_metadata.R
+│       ├── explore_ingest_dictionary.R
+│       ├── list_raw_tables.R
+│       ├── list_ingests.R
+│       ├── profile_data.R
+│       ├── extract_categorical_values.R
+│       ├── run_extract_categorical_values.R
 │       ├── make_toy_raw_extracts.R
 │       └── bulk_deidentify_toy_files.R
 │
@@ -557,7 +710,12 @@ pulse-pipeline/
 │   │   ├── recreate_METADATA_v2.sql
 │   │   ├── create_METADATA_HISTORY.sql
 │   │   ├── create_STRUCTURE_QC_TABLE.sql
-│   │   └── create_RULE_LIBRARY.sql
+│   │   ├── create_RULE_LIBRARY.sql
+│   │   ├── create_DATA_PROFILE.sql
+│   │   ├── create_DATA_PROFILE_DISTRIBUTION.sql
+│   │   ├── create_DATA_PROFILE_SENTINEL.sql
+│   │   ├── create_DATA_PROFILE_ISSUE.sql
+│   │   └── create_DATA_PROFILE_SUMMARY.sql
 │   │
 │   └── inserts/                       # Seed data
 │       ├── insert_RULE_LIBRARY.sql
@@ -572,6 +730,7 @@ pulse-pipeline/
 │       ├── test_step2_batch_logging.R
 │       ├── test_step3_schema_validation.R
 │       ├── test_step4_metadata_sync.R
+│       ├── test_step5_data_profiling.R
 │       └── helper_pulse_step1.R
 │
 ├── docs/                              # Step documentation and SOPs
@@ -595,12 +754,18 @@ pulse-pipeline/
 │   │   ├── step3_function_atlas.md
 │   │   ├── step3_governance.md
 │   │   └── step3_sop_summary.md
-│   └── step4/
-│       ├── step4_cluster4_snapshot.json
-│       ├── step4_developer_onboarding.md
-│       ├── step4_function_atlas.md
-│       ├── step4_governance.md
-│       └── step4_sop_summary.md
+│   ├── step4/
+│   │   ├── step4_cluster4_snapshot.json
+│   │   ├── step4_developer_onboarding.md
+│   │   ├── step4_function_atlas.md
+│   │   ├── step4_governance.md
+│   │   └── step4_sop_summary.md
+│   └── step5/
+│       ├── step5_cluster5_snapshot.json
+│       ├── step5_developer_onboarding.md
+│       ├── step5_function_atlas.md
+│       ├── step5_governance.md
+│       └── step5_sop_summary.md
 │
 ├── reference/                         # Pipeline input dictionaries (tracked in git)
 │   ├── CURRENT_core_metadata_dictionary.xlsx
@@ -612,7 +777,7 @@ pulse-pipeline/
 │   └── archive/                      # Timestamped prior versions of core dictionary
 │
 ├── output/                            # Pipeline-generated artifacts (tracked in git)
-│   └── profiling/                    # Data profiling outputs from r/explore/
+│   └── profiling/                    # Data profiling outputs from r/sandbox/
 │       ├── categorical_values.csv
 │       ├── categorical_values_consolidated.csv
 │       └── raw_ingest_profile.csv
@@ -649,6 +814,19 @@ Located at `config/pipeline_settings.yml`. Defines controlled vocabularies used 
 
 Also defines required source fields and default values.
 
+### profiling_settings.yml
+
+Located at `config/profiling_settings.yml`. Defines data profiling thresholds used by Step 5:
+
+| Setting | Purpose |
+|---------|---------|
+| `quality_score_thresholds` | Missingness and critical issue thresholds for Excellent/Good/Fair scores |
+| `missingness_thresholds` | Percentage breakpoints for critical (0%), high (20%), moderate (10%) |
+| `sentinel_detection` | Numeric and string sentinel lists, min frequency %, max unique for detection |
+| `identifier_columns` | Exact column names to classify as identifiers |
+| `identifier_patterns` | Regex patterns to match identifier columns |
+| `display` | Top N categories, decimal places |
+
 ### source_params.yml
 
 Located at `config/source_params.yml`. Written automatically by `pulse_launch()` during Step 1. Contains the current source's registration parameters (source_id, source_name, system_type, etc.).
@@ -678,27 +856,31 @@ Destructive maintenance utilities for resetting pipeline state during developmen
 
 | Function | Purpose |
 |----------|---------|
-| `clear_all_governance_logs()` | TRUNCATE all 6 governance tables (FK-safe order) |
+| `clear_all_governance_logs()` | TRUNCATE all governance tables (FK-safe order) |
 | `clear_ingest_logs()` | TRUNCATE ingest_file_log and batch_log only |
 | `clear_batch_logs()` | TRUNCATE batch_log only |
 | `drop_all_tables_in_raw_schema()` | DROP all tables in the raw schema |
 
-### Explore Tools (`r/explore/`)
+### Sandbox Tools (`r/sandbox/`)
 
-Read-only inspection functions for querying governance and reference tables:
+Ad-hoc exploration scripts and test data generators. These are not part of the production pipeline:
 
-| Function | Purpose |
-|----------|---------|
-| `explore_source_registry(con)` | Browse registered sources |
-| `explore_audit_log(con)` | View audit events with filtering |
-| `explore_batch_log(con)` | View ingest batches and status |
-| `explore_ingest_file_log(con)` | View file-level lineage |
-| `explore_pipeline_steps(con)` | View pipeline step definitions |
-| `explore_structure_qc(con)` | Browse schema validation issues |
-| `explore_metadata(con)` | View expected schema definitions |
-| `explore_ingest_dictionary(con)` | View column harmonization rules |
-| `list_raw_tables(con)` | List all raw.* tables with source mapping |
-| `list_ingests(con)` | List all ingests with status summary |
+| Script | Purpose |
+|--------|---------|
+| `explore_source_registry.R` | Browse registered sources |
+| `explore_audit_log.R` | View audit events with filtering |
+| `explore_batch_log.R` | View ingest batches and status |
+| `explore_ingest_file_log.R` | View file-level lineage |
+| `explore_pipeline_steps.R` | View pipeline step definitions |
+| `explore_structure_qc.R` | Browse schema validation issues |
+| `explore_metadata.R` | View expected schema definitions |
+| `explore_ingest_dictionary.R` | View column harmonization rules |
+| `list_raw_tables.R` | List all raw.* tables with source mapping |
+| `list_ingests.R` | List all ingests with status summary |
+| `profile_data.R` | Early prototype of data profiling (superseded by Step 5) |
+| `extract_categorical_values.R` | Extract distinct categorical values from raw tables |
+| `make_toy_raw_extracts.R` | Generate toy CSV test data |
+| `bulk_deidentify_toy_files.R` | De-identify toy data for testing |
 
 ---
 
@@ -715,6 +897,7 @@ testthat::test_file("tests/testthat/test_step1_register_source.R")
 testthat::test_file("tests/testthat/test_step2_batch_logging.R")
 testthat::test_file("tests/testthat/test_step3_schema_validation.R")
 testthat::test_file("tests/testthat/test_step4_metadata_sync.R")
+testthat::test_file("tests/testthat/test_step5_data_profiling.R")
 ```
 
 Tests require a running PostgreSQL instance with the PULSE database bootstrapped.

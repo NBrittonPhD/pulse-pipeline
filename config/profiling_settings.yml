@@ -1,0 +1,50 @@
+# =============================================================================
+# PULSE PIPELINE — PROFILING CONFIGURATION
+# =============================================================================
+# Thresholds, sentinel lists, and display settings for Step 5: Data Profiling.
+# Loaded by load_profiling_config().
+# Author: Noel
+# =============================================================================
+
+quality_score_thresholds:
+  excellent:
+    max_missing_pct: 5
+    max_critical_issues: 0
+  good:
+    max_missing_pct: 10
+    max_critical_issues: 2
+  fair:
+    max_missing_pct: 20
+    max_critical_issues: 5
+
+missingness_thresholds:
+  critical: 0
+  high: 20
+  moderate: 10
+
+sentinel_detection:
+  numeric_sentinels: [999, 9999, -999, -9999, -1, 99, 88, 77]
+  string_sentinels: ["NA", "N/A", "NULL", "UNKNOWN", "UNK", "MISSING", "NOT RECORDED"]
+  min_frequency_pct: 1.0
+  max_unique_for_detection: 50
+
+identifier_columns:
+  - "ACCOUNTNO"
+  - "MEDRECNO"
+  - "TRAUMANO"
+  - "account_number"
+  - "mrn"
+  - "trauma_no"
+  - "cisir_id"
+
+identifier_patterns:
+  - "_id$"
+  - "_no$"
+  - "^id_"
+  - "^accountno"
+  - "^medrecno"
+  - "^traumano"
+
+display:
+  top_n_categories: 15
+  decimal_places: 2

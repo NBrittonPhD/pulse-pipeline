@@ -93,4 +93,4 @@ flowchart TD
 
 ## Next Step
 
-After Step 4 is complete, proceed to **Step 5: Data Profiling** (`r/scripts/5_profile_raw_data.R`).
+After Step 4 is complete, proceed to **Step 5: Data Profiling** (`r/scripts/5_profile_data.R`).
