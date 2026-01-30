@@ -67,18 +67,24 @@ if (is.null(con)) {
   stop("Failed to connect to database. Exiting.")
 }
 
-# Ensure cleanup on exit
-on.exit({
-  if (DBI::dbIsValid(con)) {
-    DBI::dbDisconnect(con)
-    cat(">> Database connection closed.\n")
-  }
-}, add = TRUE)
+# NOTE: on.exit() does NOT work in source()-d scripts. Each top-level
+# expression runs in its own eval() frame, so on.exit() fires immediately
+# after registration instead of at script end. Connection cleanup is handled
+# explicitly at the end of this script instead.
 
 cat(">> Connected successfully!\n\n")
 
 # Run extraction
-results <- extract_categorical_values(con, verbose = TRUE)
+results <- tryCatch(
+  extract_categorical_values(con, verbose = TRUE),
+  error = function(e) {
+    if (DBI::dbIsValid(con)) {
+      DBI::dbDisconnect(con)
+      cat(">> Database connection closed.\n")
+    }
+    stop(e)
+  }
+)
 
 # Print summary to console
 print_categorical_summary(results)
@@ -120,6 +126,14 @@ cat("Output files:\n")
 cat("  - Detailed:     ", output_detailed, "\n")
 cat("  - Consolidated: ", output_consolidated, "\n")
 cat("\n")
+
+# =============================================================================
+# CLEANUP
+# =============================================================================
+if (DBI::dbIsValid(con)) {
+  DBI::dbDisconnect(con)
+  cat(">> Database connection closed.\n")
+}
 
 # Return results invisibly for further use
 invisible(list(

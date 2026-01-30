@@ -133,13 +133,10 @@ if (!DBI::dbIsValid(con)) {
 message("[run_metadata_refresh] Database connection established ",
         "successfully.")
 
-# Ensure cleanup on exit
-on.exit({
-  if (DBI::dbIsValid(con)) {
-    DBI::dbDisconnect(con)
-    message("[run_metadata_refresh] Database connection closed.")
-  }
-}, add = TRUE)
+# NOTE: on.exit() does NOT work in source()-d scripts. Each top-level
+# expression runs in its own eval() frame, so on.exit() fires immediately
+# after registration instead of at script end. Connection cleanup is handled
+# explicitly at the end of this script instead.
 
 # =============================================================================
 # EXECUTE METADATA REFRESH
@@ -169,6 +166,10 @@ result <- tryCatch({
 }, error = function(e) {
   message("[run_metadata_refresh] ERROR: Metadata refresh failed.")
   message("[run_metadata_refresh] Error message: ", e$message)
+  if (DBI::dbIsValid(con)) {
+    DBI::dbDisconnect(con)
+    message("[run_metadata_refresh] Database connection closed.")
+  }
   stop(e)
 })
 
@@ -242,6 +243,14 @@ if (result$update_type_result$new_rows > 0) {
           " new variables need type review.")
   message("  Open reference/type_decisions/type_decision_table.xlsx")
   message("  and set final_type for rows marked 'PENDING REVIEW'.")
+}
+
+# =============================================================================
+# CLEANUP
+# =============================================================================
+if (DBI::dbIsValid(con)) {
+  DBI::dbDisconnect(con)
+  message("[run_metadata_refresh] Database connection closed.")
 }
 
 message("")
