@@ -58,6 +58,9 @@ source("r/steps/log_batch_ingest.R")   # contains log_batch_ingest(), ingest_bat
 # Load ingestion action logic
 source("r/steps/ingest.R")             # contains ingest_one_file()
 
+# Load staging promotion utility
+source("r/build_tools/promote_to_staging.R")  # contains promote_to_staging()
+
 # Check raw directory
 if (!fs::dir_exists(raw_path)) {
   stop(glue::glue("Raw directory does not exist: {raw_path}"))
@@ -65,6 +68,23 @@ if (!fs::dir_exists(raw_path)) {
 
 # Connect to DB
 con <- connect_to_pulse()
+
+# Load type_decisions for automatic staging promotion
+type_decisions <- tryCatch({
+  td <- readxl::read_excel("reference/type_decisions/type_decision_table.xlsx")
+  names(td) <- tolower(names(td))
+  # Handle both naming conventions for counting tables
+  tbl_col <- if ("lake_table_name" %in% names(td)) "lake_table_name" else "table_name"
+  message(">> Type decisions loaded: ", nrow(td), " rows (",
+          length(unique(td[[tbl_col]])), " tables)")
+  td
+},
+error = function(e) {
+  message(">> WARNING: Could not load type_decision_table.xlsx — ",
+          "staging promotion will be skipped.")
+  message("   Reason: ", conditionMessage(e))
+  NULL
+})
 
 # List incoming files
 files <- fs::dir_ls(raw_path, regexp = "\\.csv$", recurse = FALSE)
@@ -96,11 +116,12 @@ message(">> Batch logging complete.")
 # ------------------------------
 message(">> Running ingest_batch()...")
 result <- ingest_batch(
-  con        = con,
-  ingest_id  = ingest_id,
-  raw_path   = raw_path,
-  source_id  = source_id,
-  source_type = source_type
+  con            = con,
+  ingest_id      = ingest_id,
+  raw_path       = raw_path,
+  source_id      = source_id,
+  source_type    = source_type,
+  type_decisions = type_decisions
 )
 
 
@@ -116,6 +137,11 @@ message("Final Status:    ", result$status)
 message("Files Processed: ", result$n_files)
 message(" - Success: ", result$n_success)
 message(" - Error:   ", result$n_error)
+if (!is.null(type_decisions)) {
+  message("Staging:         auto-promoted (see messages above)")
+} else {
+  message("Staging:         skipped (no type_decisions)")
+}
 message("==============================\n")
 
 message(">> Step 2 complete.")

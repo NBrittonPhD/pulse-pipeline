@@ -64,7 +64,8 @@ log_batch_ingest <- function(con, ingest_id, source_id, source_type, file_paths)
 # ingest_batch() — SAFE, DEFENSIVE, STRICT
 # =============================================================================
 
-ingest_batch <- function(con, ingest_id, raw_path, source_id, source_type) {
+ingest_batch <- function(con, ingest_id, raw_path, source_id, source_type,
+                         type_decisions = NULL) {
   
   files <- dbGetQuery(
     con,
@@ -175,7 +176,47 @@ ingest_batch <- function(con, ingest_id, raw_path, source_id, source_type) {
     
     success_count <- success_count + 1L
   }
-  
+
+  # ---- Promote unique lake tables to staging (if type_decisions provided) ----
+  if (!is.null(type_decisions) && success_count > 0L) {
+
+    # Collect unique lake_table names from successfully ingested files
+    successful_tables <- DBI::dbGetQuery(
+      con,
+      glue("
+        SELECT DISTINCT lake_table_name
+          FROM governance.ingest_file_log
+         WHERE ingest_id  = '{ingest_id}'
+           AND load_status = 'success'
+           AND lake_table_name IS NOT NULL
+      ")
+    )$lake_table_name
+
+    if (length(successful_tables) > 0) {
+      message("\n>> [Step 2] Promoting ", length(successful_tables),
+              " table(s) to staging...")
+
+      for (stbl in successful_tables) {
+        promo <- tryCatch(
+          promote_to_staging(con, stbl, type_decisions),
+          error = function(e) {
+            list(status = "error", lake_table = stbl,
+                 error_message = conditionMessage(e))
+          }
+        )
+
+        if (identical(promo$status, "promoted")) {
+          message("   - staging.", stbl, " OK (",
+                  promo$n_rows, " rows, ",
+                  promo$n_typed, "/", promo$n_columns, " typed)")
+        } else {
+          message("   - staging.", stbl, " WARN: ",
+                  promo$error_message %||% "promotion failed")
+        }
+      }
+    }
+  }
+
   # ---- Final batch status ----
   final_status <- dplyr::case_when(
     success_count == 0L ~ "error",
