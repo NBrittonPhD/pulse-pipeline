@@ -50,6 +50,22 @@ Record metadata and status for *each* file in a batch.
 
 ---
 
+# 3. `staging.<lake_table>`
+
+**Purpose:**
+Auto-promoted typed tables created from raw data using SQL CAST.
+
+**Key Details:**
+- Created by `promote_to_staging()` during `ingest_batch()` when `type_decisions` is provided
+- Each column is CAST to its target type from `type_decision_table.xlsx` (final_type → suggested_type → TEXT fallback)
+- Table is dropped and recreated within a transaction on each promotion
+- Currently 47 staging tables corresponding to all 47 raw tables
+
+**Written By:**
+- `promote_to_staging()` (called by `ingest_batch()`)
+
+---
+
 # Governance Principles
 
 1. **Every discovered file must have a lineage record.**
@@ -65,7 +81,8 @@ Record metadata and status for *each* file in a batch.
 
 # Downstream Dependencies
 
-- **Step 3:** Schema Validation
-- **Step 4:** Data Profiling
+- **Step 3:** Schema Validation (uses `raw.*` tables and lineage)
+- **Step 5:** Data Profiling (profiles `raw.*` or `staging.*` tables)
+- **Step 6:** Harmonization (uses `staging.*` tables as input for `validated.*`)
 - **Step 10:** Governance Release Documentation
 - Audits, reproducibility, error analysis

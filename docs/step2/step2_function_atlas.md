@@ -48,7 +48,8 @@ ingest_batch(
     ingest_id,              # character: batch identifier (required)
     raw_path,               # character: path to raw data directory (required)
     source_id,              # character: source identifier (required)
-    source_type             # character: source system type (required)
+    source_type,            # character: source system type (required)
+    type_decisions = NULL   # data.frame: type_decision_table for staging promotion (optional)
 )
 ```
 
@@ -63,6 +64,7 @@ ingest_batch(
 - Calls `ingest_one_file()` for each pending file
 - Updates `governance.ingest_file_log` rows with results (row_count, checksum, file_size_bytes, load_status)
 - Updates `governance.batch_log` with final status and counts
+- When `type_decisions` is provided: promotes each unique successfully ingested raw table to `staging.<lake_table>` via `promote_to_staging()`
 
 ---
 
@@ -159,15 +161,52 @@ align_df_to_raw_table(
 
 ---
 
+### `promote_to_staging()`
+
+**File:** `r/build_tools/promote_to_staging.R`
+
+**Purpose:** Promote a single `raw.<lake_table>` to `staging.<lake_table>` by SQL CAST using target types from the type_decision_table. Called automatically by `ingest_batch()` when `type_decisions` is provided.
+
+**Signature:**
+```r
+promote_to_staging(
+    con,                    # DBIConnection (required)
+    lake_table_name,        # character: table to promote (required)
+    type_decisions          # data.frame: type_decision_table with final_type/suggested_type columns (required)
+)
+```
+
+**Returns:**
+```r
+list(
+    status        = "promoted" | "error",
+    lake_table    = "table_name",
+    n_rows        = 100,
+    n_columns     = 15,
+    n_typed       = 12,          # columns that got a non-TEXT type
+    ddl           = "CREATE ...",  # the SQL statement used
+    error_message = NULL | "description"
+)
+```
+
+**Side Effects:**
+- Drops `staging.<table>` if it exists
+- Creates `staging.<table>` via `CREATE TABLE AS SELECT CAST(...)` from `raw.<table>`
+- Executes within a transaction (BEGIN / DROP / CREATE / COMMIT); rolls back on error
+
+---
+
 ## Dependency Graph
 
 ```
 2_ingest_and_log_files.R (user script)
-    └── log_batch_ingest() (batch + file logging)
+    ├── type_decisions (loaded from type_decision_table.xlsx)
+    ├── log_batch_ingest() (batch + file logging)
     └── ingest_batch() (orchestrator)
-            └── ingest_one_file() (per-file ingest)
-                    ├── get_ingest_dict() (dictionary lookup)
-                    └── align_df_to_raw_table() (table alignment)
+            ├── ingest_one_file() (per-file ingest)
+            │       ├── get_ingest_dict() (dictionary lookup)
+            │       └── align_df_to_raw_table() (table alignment)
+            └── promote_to_staging() (raw → staging type casting, optional)
 ```
 
 ---

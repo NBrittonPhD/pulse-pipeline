@@ -28,6 +28,7 @@ Step 2 ensures reproducibility, auditability, and correct mapping between incomi
    - `lake_table_name`
    - `load_status`
 6. Finalize the batch with a `success`, `partial`, or `error` status.
+7. Promote each successfully ingested raw table to `staging.<lake_table>` via `promote_to_staging()` when `type_decisions` are provided (loaded from `type_decision_table.xlsx`).
 
 ---
 
@@ -47,6 +48,10 @@ Step 2 ensures reproducibility, auditability, and correct mapping between incomi
   - `ingest_one_file()`
   - `infer_lake_table()`
   - `get_ingest_dict()`
+
+- `r/build_tools/promote_to_staging.R`
+  Contains:
+  - `promote_to_staging()` — SQL-based raw → staging type-casting
 
 ---
 
@@ -72,6 +77,10 @@ flowchart TD
     F --> G[(raw.<lake_table>)]
     E --> H[(ingest_file_log: success/error)]
     E --> I[(batch_log: final status)]
+    I --> J{type_decisions?}
+    J -->|Yes| K[promote_to_staging()]
+    K --> L[(staging.<lake_table>)]
+    J -->|No| M[Skip staging]
 ```
 
 ## How to Run Step 2
@@ -85,6 +94,7 @@ source("r/scripts/2_ingest_and_log_files.R")
 ## When Step 2 Is Considered Complete
 - All file lineage rows exist
 - Raw tables contain newly appended data
+- Staging tables created with proper type casting (when type_decisions available)
 - Checksums, row counts, and sizes are written
 - batch_log has a final status
 - No unlogged or partially logged files

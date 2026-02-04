@@ -91,8 +91,8 @@ The pipeline uses five PostgreSQL schemas:
 | `governance` | Pipeline control, audit trail, batch lineage, QC issues, data profiling |
 | `reference` | Expected schema definitions, ingest dictionaries, metadata |
 | `raw` | Landing zone for ingested data (one table per source file type) |
-| `staging` | Intermediate tables for transformation (future steps) |
-| `validated` | Final curated, validated tables (future steps) |
+| `staging` | Typed tables (auto-promoted from raw during ingestion via `promote_to_staging()`) |
+| `validated` | Final curated, validated tables (Step 6 harmonization) |
 
 ### Governance Tables
 
@@ -126,7 +126,7 @@ The `reference/` directory contains governed metadata files that drive pipeline 
 |------|----------|---------|-------------|
 | `CURRENT_core_metadata_dictionary.xlsx` | `reference/` | Master dictionary of all expected lake table variables, data types, and requirements. Upstream source maintained by data stewards. Synced to `reference.metadata` by Step 4 (`sync_metadata()`). | Step 4 metadata sync (via `reference.metadata` DB table) |
 | `ingest_dictionary.xlsx` | `reference/` | Maps source file columns to lake table/variable names. Defines which source files map to which raw tables and how columns are harmonized. Synced to `reference.ingest_dictionary` database table. | Step 2 ingestion (`get_ingest_dict()`, `ingest_one_file()`) |
-| `type_decision_table.xlsx` | `reference/type_decisions/` | Human-reviewed target SQL types for each variable. Defines what data type each column should be coerced to in the staging schema. Joined onto the expected schema during dictionary building. | Step 3A schema builder (`build_expected_schema_dictionary()`), Step 3 validation (`compare_fields()`) |
+| `type_decision_table.xlsx` | `reference/type_decisions/` | Human-reviewed target SQL types for each variable. Defines what data type each column should be coerced to in the staging schema. Used for automatic raw → staging promotion during ingestion and joined onto the expected schema during dictionary building. | Step 2 ingestion (`promote_to_staging()`), Step 3A schema builder (`build_expected_schema_dictionary()`), Step 3 validation (`compare_fields()`) |
 | `decision_note_reference.xlsx` | `reference/type_decisions/` | Companion notes explaining the rationale behind type decisions. Not consumed by any code -- serves as governance documentation for auditors and data stewards. | Human reference only |
 
 Prior versions of the core metadata dictionary are preserved in `reference/archive/` with timestamps in the filename.
@@ -231,6 +231,7 @@ flowchart TD
     A --> C[Set USER INPUTS]
     B --> D[connect_to_pulse]
     C --> E[Discover CSV files in raw/source_id/incoming]
+    C --> E2[Load type_decisions from Excel]
 
     E --> F[log_batch_ingest]
     F --> G[(governance.batch_log)]
@@ -248,6 +249,10 @@ flowchart TD
 
     P --> Q[UPDATE ingest_file_log]
     Q --> R[Finalize batch_log status]
+    R --> S{type_decisions provided?}
+    S -->|Yes| T[promote_to_staging per table]
+    T --> U[(staging.lake_table: typed)]
+    S -->|No| V[Skip staging promotion]
 ```
 
 **Key files:**
@@ -258,6 +263,7 @@ flowchart TD
 | `r/steps/log_batch_ingest.R` | Batch logging + `ingest_batch()` orchestrator |
 | `r/steps/ingest.R` | Single-file ingestion engine (`ingest_one_file()`) |
 | `r/steps/run_step2_batch_logging.R` | Programmatic step wrapper |
+| `r/build_tools/promote_to_staging.R` | SQL-based raw → staging type-casting promotion |
 | `r/utilities/normalize_names.R` | Column name normalization |
 
 **Database writes:**
@@ -267,6 +273,7 @@ flowchart TD
 | `governance.batch_log` | INSERT batch record, UPDATE with final status |
 | `governance.ingest_file_log` | INSERT one row per file (pending), UPDATE with results |
 | `raw.<lake_table>` | CREATE table if needed, APPEND ingested data |
+| `staging.<lake_table>` | DROP + CREATE via SQL CAST from raw (when `type_decisions` provided) |
 
 **File-level lineage tracked per file:**
 
@@ -287,6 +294,8 @@ flowchart TD
 | `ingest_id` | `ING_cisir2026_toy_20260128_170000` | Unique batch identifier |
 
 The `source_type` is derived automatically from `reference.ingest_dictionary` by matching incoming filenames against `source_table_name` entries.
+
+The script also loads `reference/type_decisions/type_decision_table.xlsx` at startup. When available, `ingest_batch()` automatically promotes each successfully ingested raw table to `staging.<lake_table>` with SQL-based type casting via `promote_to_staging()`. If the type decisions file is missing, staging promotion is skipped gracefully.
 
 ---
 
@@ -661,6 +670,7 @@ pulse-pipeline/
 │   │   └── update_type_decision_table.R
 │   │
 │   ├── build_tools/                   # Development, maintenance, and data prep utilities
+│   │   ├── backfill_staging.R
 │   │   ├── bulk_deidentify_toy_files.R
 │   │   ├── clear_all_governance_logs.R
 │   │   ├── clear_batch_logs.R
@@ -669,6 +679,7 @@ pulse-pipeline/
 │   │   ├── create_raw_table_from_schema.R
 │   │   ├── drop_all_tables_in_raw_schema.R
 │   │   ├── make_toy_raw_extracts.R
+│   │   ├── promote_to_staging.R
 │   │   ├── read_csv_strict.R
 │   │   └── scalar_helpers.R
 │   │
@@ -755,12 +766,14 @@ pulse-pipeline/
 │   │   ├── step4_function_atlas.md
 │   │   ├── step4_governance.md
 │   │   └── step4_sop_summary.md
-│   └── step5/
-│       ├── step5_cluster5_snapshot.json
-│       ├── step5_developer_onboarding.md
-│       ├── step5_function_atlas.md
-│       ├── step5_governance.md
-│       └── step5_sop_summary.md
+│   ├── step5/
+│   │   ├── step5_cluster5_snapshot.json
+│   │   ├── step5_developer_onboarding.md
+│   │   ├── step5_function_atlas.md
+│   │   ├── step5_governance.md
+│   │   └── step5_sop_summary.md
+│   └── step6/
+│       └── VALIDATED_SCHEMA_OPTIONS.md
 │
 ├── reference/                         # Pipeline input dictionaries (tracked in git)
 │   ├── CURRENT_core_metadata_dictionary.xlsx
@@ -839,6 +852,7 @@ Development, maintenance, and data preparation utilities. Not part of the produc
 
 | Script | Purpose |
 |--------|---------|
+| `backfill_staging.R` | One-time backfill: promote all raw tables to staging using `promote_to_staging()` |
 | `bulk_deidentify_toy_files.R` | De-identify toy data files for safe testing |
 | `clear_all_governance_logs.R` | TRUNCATE all governance tables (FK-safe order) |
 | `clear_batch_logs.R` | TRUNCATE batch_log only |
@@ -847,6 +861,7 @@ Development, maintenance, and data preparation utilities. Not part of the produc
 | `create_raw_table_from_schema.R` | Create raw tables from schema definitions |
 | `drop_all_tables_in_raw_schema.R` | DROP all tables in the raw schema |
 | `make_toy_raw_extracts.R` | Generate toy CSV test data from source extracts |
+| `promote_to_staging.R` | Promote a single raw table to staging via SQL CAST using type_decision_table types |
 | `read_csv_strict.R` | Strict CSV reader with type enforcement |
 | `scalar_helpers.R` | Scalar utility functions |
 
