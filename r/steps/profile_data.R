@@ -109,18 +109,34 @@ profile_data <- function(con, ingest_id, schema_to_profile = "raw",
     }
 
     # =========================================================================
-    # GET TABLES FROM INGEST FILE LOG
+    # GET TABLES TO PROFILE
     # =========================================================================
-    raw_tables <- DBI::dbGetQuery(con, glue(
-        "SELECT DISTINCT lake_table_name
-         FROM governance.ingest_file_log
-         WHERE ingest_id = '{ingest_id}'
-           AND load_status = 'success'
-         ORDER BY lake_table_name"
-    ))
+    # For raw/staging: use ingest_file_log (lake_table_name).
+    # For validated: use transform_log (target_table) since validated table
+    # names differ from staging table names.
+    # =========================================================================
+    if (schema_to_profile == "validated") {
+        raw_tables <- DBI::dbGetQuery(con, glue(
+            "SELECT DISTINCT target_table AS lake_table_name
+             FROM governance.transform_log
+             WHERE ingest_id = '{ingest_id}'
+               AND target_schema = 'validated'
+               AND status = 'success'
+             ORDER BY target_table"
+        ))
+    } else {
+        raw_tables <- DBI::dbGetQuery(con, glue(
+            "SELECT DISTINCT lake_table_name
+             FROM governance.ingest_file_log
+             WHERE ingest_id = '{ingest_id}'
+               AND load_status = 'success'
+             ORDER BY lake_table_name"
+        ))
+    }
 
     if (nrow(raw_tables) == 0) {
-        stop(glue("[profile_data] ERROR: No successfully loaded tables found for ingest_id '{ingest_id}'."))
+        stop(glue("[profile_data] ERROR: No successfully loaded tables found for ingest_id '{ingest_id}' ",
+                  "in schema '{schema_to_profile}'."))
     }
 
     n_tables <- nrow(raw_tables)
