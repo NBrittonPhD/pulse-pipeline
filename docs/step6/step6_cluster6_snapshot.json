@@ -1,0 +1,249 @@
+{
+  "version": "step6_cluster6_snapshot_v1",
+  "description": "PULSE pipeline Step 6 x Cluster 6 (Harmonization) -- code + structure snapshot.",
+  "status": "in_testing",
+  "schemas": {
+    "reference": "reference",
+    "governance": "governance",
+    "staging": "staging",
+    "validated": "validated"
+  },
+  "db_objects": {
+    "tables": [
+      {
+        "name": "reference.harmonization_map",
+        "purpose": "Column-level mappings from staging tables to validated tables. One row per (source_type, source_table, source_column, target_table, target_column).",
+        "ddl_file": "sql/ddl/create_HARMONIZATION_MAP.sql",
+        "key_columns": ["map_id", "source_type", "source_table", "source_column", "target_table", "target_column", "transform_type", "transform_expression", "is_active", "priority", "created_at", "updated_at"]
+      },
+      {
+        "name": "governance.transform_log",
+        "purpose": "Audit trail of harmonization transformations. One row per source_table to target_table operation per ingest.",
+        "ddl_file": "sql/ddl/create_TRANSFORM_LOG.sql",
+        "key_columns": ["transform_id", "ingest_id", "source_schema", "source_table", "source_row_count", "target_schema", "target_table", "target_row_count", "operation_type", "columns_mapped", "status", "error_message", "started_at", "completed_at", "duration_seconds"]
+      },
+      {
+        "name": "validated.admission",
+        "purpose": "Unified admission data across all sources.",
+        "ddl_file": "sql/ddl/create_VALIDATED_ADMISSION.sql"
+      },
+      {
+        "name": "validated.admission_vitals",
+        "purpose": "Unified admission vitals across all sources.",
+        "ddl_file": "sql/ddl/create_VALIDATED_ADMISSION_VITALS.sql"
+      },
+      {
+        "name": "validated.blood_products",
+        "purpose": "Unified blood product administration data.",
+        "ddl_file": "sql/ddl/create_VALIDATED_BLOOD_PRODUCTS.sql"
+      },
+      {
+        "name": "validated.complications",
+        "purpose": "Unified complication records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_COMPLICATIONS.sql"
+      },
+      {
+        "name": "validated.demographics",
+        "purpose": "Unified patient demographics.",
+        "ddl_file": "sql/ddl/create_VALIDATED_DEMOGRAPHICS.sql"
+      },
+      {
+        "name": "validated.diagnoses",
+        "purpose": "Unified diagnosis records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_DIAGNOSES.sql"
+      },
+      {
+        "name": "validated.discharge",
+        "purpose": "Unified discharge data.",
+        "ddl_file": "sql/ddl/create_VALIDATED_DISCHARGE.sql"
+      },
+      {
+        "name": "validated.injuries",
+        "purpose": "Unified injury detail records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_INJURIES.sql"
+      },
+      {
+        "name": "validated.injury_event",
+        "purpose": "Unified injury event records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_INJURY_EVENT.sql"
+      },
+      {
+        "name": "validated.insurance",
+        "purpose": "Unified insurance/payer records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_INSURANCE.sql"
+      },
+      {
+        "name": "validated.labs",
+        "purpose": "Unified lab results.",
+        "ddl_file": "sql/ddl/create_VALIDATED_LABS.sql"
+      },
+      {
+        "name": "validated.medications",
+        "purpose": "Unified medication administration records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_MEDICATIONS.sql"
+      },
+      {
+        "name": "validated.micro_cultures",
+        "purpose": "Unified microbiology culture results.",
+        "ddl_file": "sql/ddl/create_VALIDATED_MICRO_CULTURES.sql"
+      },
+      {
+        "name": "validated.micro_sensitivities",
+        "purpose": "Unified microbiology sensitivity results.",
+        "ddl_file": "sql/ddl/create_VALIDATED_MICRO_SENSITIVITIES.sql"
+      },
+      {
+        "name": "validated.patient_tracking",
+        "purpose": "Unified patient tracking/location records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_PATIENT_TRACKING.sql"
+      },
+      {
+        "name": "validated.pmh",
+        "purpose": "Unified past medical history records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_PMH.sql"
+      },
+      {
+        "name": "validated.prehospital_procedures",
+        "purpose": "Unified prehospital procedure records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_PREHOSPITAL_PROCEDURES.sql"
+      },
+      {
+        "name": "validated.prehospital_transport",
+        "purpose": "Unified prehospital transport records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_PREHOSPITAL_TRANSPORT.sql"
+      },
+      {
+        "name": "validated.prehospital_vitals",
+        "purpose": "Unified prehospital vital signs.",
+        "ddl_file": "sql/ddl/create_VALIDATED_PREHOSPITAL_VITALS.sql"
+      },
+      {
+        "name": "validated.procedures",
+        "purpose": "Unified procedure records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_PROCEDURES.sql"
+      },
+      {
+        "name": "validated.toxicology",
+        "purpose": "Unified toxicology screen results.",
+        "ddl_file": "sql/ddl/create_VALIDATED_TOXICOLOGY.sql"
+      },
+      {
+        "name": "validated.trauma_scores",
+        "purpose": "Unified trauma scoring data (ISS, GCS, RTS, etc.).",
+        "ddl_file": "sql/ddl/create_VALIDATED_TRAUMA_SCORES.sql"
+      },
+      {
+        "name": "validated.vitals",
+        "purpose": "Unified vital signs records.",
+        "ddl_file": "sql/ddl/create_VALIDATED_VITALS.sql"
+      }
+    ]
+  },
+  "functions": [
+    {
+      "name": "harmonize_data",
+      "file": "r/steps/harmonize_data.R",
+      "category": "step_logic",
+      "description": "Step 6 orchestrator: verify ingest, determine target tables, call harmonize_table() for each, write audit event, return summary.",
+      "calls": ["DBI::dbGetQuery", "harmonize_table", "write_audit_event", "dplyr", "glue"],
+      "called_by": ["6_harmonize_data.R"]
+    },
+    {
+      "name": "harmonize_table",
+      "file": "r/harmonization/harmonize_table.R",
+      "category": "harmonization",
+      "description": "Harmonize all source staging tables into one validated target. Groups by (source_type, source_table), deletes prior ingest data, builds and executes INSERT queries, logs to transform_log.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbExecute", "DBI::dbExistsTable", "load_harmonization_map", "build_harmonization_query", "dplyr", "glue"],
+      "called_by": ["harmonize_data"]
+    },
+    {
+      "name": "sync_harmonization_map",
+      "file": "r/harmonization/sync_harmonization_map.R",
+      "category": "harmonization",
+      "description": "Sync column mappings from reference.metadata to reference.harmonization_map. Expands comma-separated targets, auto-detects transform_type, upserts preserving manual overrides.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbWriteTable", "DBI::dbExecute", "dplyr", "glue", "stringr", "tidyr"],
+      "called_by": ["6_harmonize_data.R"]
+    },
+    {
+      "name": "load_harmonization_map",
+      "file": "r/harmonization/load_harmonization_map.R",
+      "category": "harmonization",
+      "description": "Load active harmonization mappings for a target table with optional source_type filtering.",
+      "calls": ["DBI::dbGetQuery", "dplyr", "glue", "tibble"],
+      "called_by": ["harmonize_table"]
+    },
+    {
+      "name": "build_harmonization_query",
+      "file": "r/harmonization/build_harmonization_query.R",
+      "category": "harmonization",
+      "description": "Build SQL SELECT to transform one staging table into validated format. Handles 5 transform types, verifies source columns, applies safe type casting.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbQuoteIdentifier", "glue"],
+      "called_by": ["harmonize_table"]
+    }
+  ],
+  "scripts": [
+    {
+      "path": "r/scripts/6_harmonize_data.R",
+      "purpose": "Human-friendly Step 6 entry: set ingest_id, optionally sync mappings, call harmonize_data(), optionally re-profile validated tables."
+    }
+  ],
+  "build_tools": [
+    {
+      "path": "r/build_tools/generate_validated_ddls.R",
+      "purpose": "Generate DDLs for all 23 validated tables from the metadata dictionary. One-time build tool."
+    }
+  ],
+  "sandbox_tools": [
+    {
+      "path": "r/sandbox/view_validated_summary.R",
+      "purpose": "View row counts and column counts for all validated tables."
+    }
+  ],
+  "ddl_files": [
+    "sql/ddl/create_HARMONIZATION_MAP.sql",
+    "sql/ddl/create_TRANSFORM_LOG.sql",
+    "sql/ddl/create_VALIDATED_ADMISSION.sql",
+    "sql/ddl/create_VALIDATED_ADMISSION_VITALS.sql",
+    "sql/ddl/create_VALIDATED_BLOOD_PRODUCTS.sql",
+    "sql/ddl/create_VALIDATED_COMPLICATIONS.sql",
+    "sql/ddl/create_VALIDATED_DEMOGRAPHICS.sql",
+    "sql/ddl/create_VALIDATED_DIAGNOSES.sql",
+    "sql/ddl/create_VALIDATED_DISCHARGE.sql",
+    "sql/ddl/create_VALIDATED_INJURIES.sql",
+    "sql/ddl/create_VALIDATED_INJURY_EVENT.sql",
+    "sql/ddl/create_VALIDATED_INSURANCE.sql",
+    "sql/ddl/create_VALIDATED_LABS.sql",
+    "sql/ddl/create_VALIDATED_MEDICATIONS.sql",
+    "sql/ddl/create_VALIDATED_MICRO_CULTURES.sql",
+    "sql/ddl/create_VALIDATED_MICRO_SENSITIVITIES.sql",
+    "sql/ddl/create_VALIDATED_PATIENT_TRACKING.sql",
+    "sql/ddl/create_VALIDATED_PMH.sql",
+    "sql/ddl/create_VALIDATED_PREHOSPITAL_PROCEDURES.sql",
+    "sql/ddl/create_VALIDATED_PREHOSPITAL_TRANSPORT.sql",
+    "sql/ddl/create_VALIDATED_PREHOSPITAL_VITALS.sql",
+    "sql/ddl/create_VALIDATED_PROCEDURES.sql",
+    "sql/ddl/create_VALIDATED_TOXICOLOGY.sql",
+    "sql/ddl/create_VALIDATED_TRAUMA_SCORES.sql",
+    "sql/ddl/create_VALIDATED_VITALS.sql"
+  ],
+  "mapping_stats": {
+    "total_mappings": 1302,
+    "validated_tables": 23,
+    "staging_tables": 47,
+    "source_types": 3
+  },
+  "step6_status": {
+    "ddl_created": true,
+    "governance_ddl_created": true,
+    "functions_implemented": true,
+    "mapping_sync_working": true,
+    "query_builder_working": true,
+    "safe_type_casting_working": true,
+    "idempotency_working": true,
+    "transform_log_working": true,
+    "audit_trail_working": true,
+    "validated_profiling_working": true,
+    "unit_tests_pass": "not yet written",
+    "integration_tests_pass": "not yet written"
+  }
+}

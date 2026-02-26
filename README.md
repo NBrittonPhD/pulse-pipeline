@@ -2,7 +2,7 @@
 
 A metadata-driven, automated data lake pipeline for PRIME-AI's PULSE governance framework.
 
-Built in R and PostgreSQL, the pipeline ingests raw CSV data from multiple clinical sources, validates schemas against governed metadata definitions, synchronizes metadata dictionaries, profiles data quality, and tracks every action through a comprehensive audit trail.
+Built in R and PostgreSQL, the pipeline ingests raw CSV data from multiple clinical sources, validates schemas against governed metadata definitions, synchronizes metadata dictionaries, profiles data quality, harmonizes data across sources into unified validated tables, and tracks every action through a comprehensive audit trail.
 
 ---
 
@@ -74,6 +74,9 @@ source("r/scripts/4_sync_metadata.R")
 
 # Step 5: Profile raw data quality (missingness, distributions, sentinels, issues)
 source("r/scripts/5_profile_data.R")
+
+# Step 6: Harmonize staging data into unified validated tables
+source("r/scripts/6_harmonize_data.R")
 ```
 
 Each script has a **USER INPUT SECTION** at the top where you set parameters like `source_id`, `ingest_id`, and `source_type`.
@@ -109,6 +112,7 @@ The pipeline uses five PostgreSQL schemas:
 | `governance.data_profile_sentinel` | Detected sentinel/placeholder values with detection method and confidence | Step 5 |
 | `governance.data_profile_issue` | Quality issues flagged at critical/warning/info severity | Step 5 |
 | `governance.data_profile_summary` | Per-table quality scores (Excellent, Good, Fair, Needs Review) | Step 5 |
+| `governance.transform_log` | Harmonization audit trail (one row per source→target operation per ingest) | Step 6 |
 
 ### Reference Tables
 
@@ -117,6 +121,7 @@ The pipeline uses five PostgreSQL schemas:
 | `reference.metadata` | Dictionary definitions synced from core metadata dictionary (version-controlled, soft deletes) |
 | `reference.metadata_history` | Field-level change audit trail across metadata versions |
 | `reference.ingest_dictionary` | Source-to-lake column mapping and harmonization rules |
+| `reference.harmonization_map` | Column-level mappings from staging to validated tables (1,302 mappings across 23 tables) |
 
 ### Reference Files (Pipeline Inputs)
 
@@ -609,6 +614,130 @@ ORDER BY severity, table_name;
 
 ---
 
+### Step 6: Harmonization (Staging to Validated) — *In Testing*
+
+**Purpose:** Map data from source-specific staging tables into unified validated tables that combine data across CISIR, CLARITY, and TRAUMA_REGISTRY. Each validated table has standardized column names, a `source_type` column for provenance, and a `source_table` column identifying the exact staging origin. Column mappings are metadata-driven via `reference.harmonization_map`, which is synced from the core metadata dictionary.
+
+**How to run:**
+
+```r
+source("r/scripts/6_harmonize_data.R")
+```
+
+**Execution flow:**
+
+```mermaid
+flowchart TD
+    A[User runs 6_harmonize_data.R] --> B[pulse-init-all.R]
+    B --> C[connect_to_pulse]
+
+    C --> D{sync_mappings_first?}
+    D -->|Yes| E[sync_harmonization_map]
+    E --> F[(reference.harmonization_map)]
+    D -->|No| G[Skip sync]
+
+    F --> H[harmonize_data]
+    G --> H
+    H --> I[Verify ingest_id in batch_log]
+    I --> J[Get target tables with active mappings]
+    J --> K[For each target table]
+
+    K --> L[harmonize_table]
+    L --> M[load_harmonization_map]
+    M --> N[Group by source_type, source_table]
+    N --> O[Delete prior data for this ingest_id]
+    O --> P[For each source group]
+    P --> Q[build_harmonization_query]
+    Q --> R[INSERT INTO validated.target SELECT ...]
+    R --> S[(validated.target_table)]
+    R --> T[(governance.transform_log)]
+
+    L --> U[Return rows inserted]
+    U --> V[Write audit_log event]
+    V --> W{profile_after?}
+    W -->|Yes| X[profile_data: validated schema]
+    W -->|No| Y[Return summary]
+    X --> Y
+```
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `r/scripts/6_harmonize_data.R` | User-facing wrapper script |
+| `r/steps/harmonize_data.R` | Step 6 orchestrator |
+| `r/harmonization/sync_harmonization_map.R` | Sync column mappings from `reference.metadata` to `reference.harmonization_map` |
+| `r/harmonization/load_harmonization_map.R` | Load active mappings for a target table |
+| `r/harmonization/build_harmonization_query.R` | Build SQL SELECT to transform staging data (handles direct, rename, expression, constant, coalesce transforms) |
+| `r/harmonization/harmonize_table.R` | Process all source tables for one validated target |
+| `r/build_tools/generate_validated_ddls.R` | Generate DDLs for all 23 validated tables from metadata dictionary |
+| `sql/ddl/create_HARMONIZATION_MAP.sql` | DDL for column mapping table |
+| `sql/ddl/create_TRANSFORM_LOG.sql` | DDL for harmonization audit trail |
+| `sql/ddl/create_VALIDATED_*.sql` | 23 validated table DDLs (one per clinical domain) |
+
+**Database reads:**
+
+| Table | Purpose |
+|-------|---------|
+| `governance.batch_log` | Verify ingest_id exists |
+| `reference.harmonization_map` | Column-level mappings (source→target) |
+| `reference.metadata` | Source for mapping sync |
+| `staging.*` | Source data to transform |
+
+**Database writes:**
+
+| Table | Action |
+|-------|--------|
+| `reference.harmonization_map` | UPSERT mappings from metadata dictionary |
+| `validated.*` | DELETE prior ingest rows + INSERT transformed data |
+| `governance.transform_log` | INSERT one row per source→target operation |
+| `governance.audit_log` | INSERT harmonization event |
+
+**Validated tables (23):**
+
+Admission, Admission Vitals, Blood Products, Complications, Demographics, Diagnoses, Discharge, Injuries, Injury Event, Insurance, Labs, Medications, Micro Cultures, Micro Sensitivities, Patient Tracking, PMH, Prehospital Procedures, Prehospital Transport, Prehospital Vitals, Procedures, Toxicology, Trauma Scores, Vitals
+
+**Transform types supported:**
+
+| Type | Description |
+|------|-------------|
+| `direct` | Source column maps 1:1 to target (same name) |
+| `rename` | Source column maps to a differently named target column |
+| `expression` | Custom SQL expression applied during transform |
+| `constant` | Literal value inserted for every row |
+| `coalesce` | COALESCE across multiple source columns |
+
+**User inputs:**
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `ingest_id` | `ING_cisir2026_toy_20260128_170418` | Must match an existing batch from Step 2 |
+| `target_tables` | `NULL` | Which validated tables to populate (NULL = all with active mappings) |
+| `source_type_filter` | `NULL` | Limit to one source type (NULL = all) |
+| `sync_mappings_first` | `TRUE` | Re-sync mappings from metadata before harmonizing |
+| `profile_after` | `TRUE` | Profile validated tables after harmonization |
+
+**Reviewing harmonization results:**
+
+```sql
+-- Transform log summary
+SELECT target_table, source_table, target_row_count, status, duration_seconds
+FROM governance.transform_log
+WHERE ingest_id = 'ING_cisir2026_toy_20260128_170418'
+ORDER BY target_table, source_table;
+
+-- Row counts per validated table
+SELECT target_table, SUM(target_row_count) AS total_rows,
+       COUNT(DISTINCT source_table) AS source_count
+FROM governance.transform_log
+WHERE ingest_id = 'ING_cisir2026_toy_20260128_170418'
+  AND status = 'success'
+GROUP BY target_table
+ORDER BY target_table;
+```
+
+---
+
 ## Directory Structure
 
 ```
@@ -627,7 +756,8 @@ pulse-pipeline/
 │   │   ├── 2_ingest_and_log_files.R
 │   │   ├── 3_validate_schema.R
 │   │   ├── 4_sync_metadata.R
-│   │   └── 5_profile_data.R
+│   │   ├── 5_profile_data.R
+│   │   └── 6_harmonize_data.R
 │   │
 │   ├── steps/                         # Core step functions
 │   │   ├── register_source.R
@@ -638,6 +768,7 @@ pulse-pipeline/
 │   │   ├── validate_schema.R
 │   │   ├── run_step3_build_expected_schema_dictionary.R
 │   │   ├── profile_data.R
+│   │   ├── harmonize_data.R
 │   │   └── write_audit_event.R
 │   │
 │   ├── utilities/                     # Reusable helper functions
@@ -650,6 +781,12 @@ pulse-pipeline/
 │   │   ├── normalize_names.R
 │   │   ├── validate_source_entry.R
 │   │   └── write_pipeline_step.R
+│   │
+│   ├── harmonization/                 # Harmonization functions (Step 6)
+│   │   ├── build_harmonization_query.R
+│   │   ├── harmonize_table.R
+│   │   ├── load_harmonization_map.R
+│   │   └── sync_harmonization_map.R
 │   │
 │   ├── profiling/                     # Data quality profiling functions (Step 5)
 │   │   ├── calculate_quality_score.R
@@ -678,6 +815,7 @@ pulse-pipeline/
 │   │   ├── coerce_types.R
 │   │   ├── create_raw_table_from_schema.R
 │   │   ├── drop_all_tables_in_raw_schema.R
+│   │   ├── generate_validated_ddls.R
 │   │   ├── make_toy_raw_extracts.R
 │   │   ├── promote_to_staging.R
 │   │   ├── read_csv_strict.R
@@ -695,7 +833,8 @@ pulse-pipeline/
 │   │   ├── list_raw_tables.R
 │   │   ├── list_ingests.R
 │   │   ├── extract_categorical_values.R
-│   │   └── run_extract_categorical_values.R
+│   │   ├── run_extract_categorical_values.R
+│   │   └── view_validated_summary.R
 │   │
 │   └── review/                        # Post-step review and inspection scripts
 │       ├── review_step1_sources.R
@@ -721,7 +860,10 @@ pulse-pipeline/
 │   │   ├── create_DATA_PROFILE_DISTRIBUTION.sql
 │   │   ├── create_DATA_PROFILE_SENTINEL.sql
 │   │   ├── create_DATA_PROFILE_ISSUE.sql
-│   │   └── create_DATA_PROFILE_SUMMARY.sql
+│   │   ├── create_DATA_PROFILE_SUMMARY.sql
+│   │   ├── create_HARMONIZATION_MAP.sql
+│   │   ├── create_TRANSFORM_LOG.sql
+│   │   └── create_VALIDATED_*.sql     # 23 validated table DDLs
 │   │
 │   └── inserts/                       # Seed data
 │       ├── insert_RULE_LIBRARY.sql
@@ -773,6 +915,11 @@ pulse-pipeline/
 │   │   ├── step5_governance.md
 │   │   └── step5_sop_summary.md
 │   └── step6/
+│       ├── step6_cluster6_snapshot.json
+│       ├── step6_developer_onboarding.md
+│       ├── step6_function_atlas.md
+│       ├── step6_governance.md
+│       ├── step6_sop_summary.md
 │       └── VALIDATED_SCHEMA_OPTIONS.md
 │
 ├── reference/                         # Pipeline input dictionaries (tracked in git)
@@ -860,6 +1007,7 @@ Development, maintenance, and data preparation utilities. Not part of the produc
 | `coerce_types.R` | Type coercion helpers for staging table creation |
 | `create_raw_table_from_schema.R` | Create raw tables from schema definitions |
 | `drop_all_tables_in_raw_schema.R` | DROP all tables in the raw schema |
+| `generate_validated_ddls.R` | Generate DDLs for all 23 validated tables from the metadata dictionary |
 | `make_toy_raw_extracts.R` | Generate toy CSV test data from source extracts |
 | `promote_to_staging.R` | Promote a single raw table to staging via SQL CAST using type_decision_table types |
 | `read_csv_strict.R` | Strict CSV reader with type enforcement |
@@ -883,6 +1031,7 @@ Ad-hoc exploration scripts for inspecting database state. These are not part of 
 | `list_ingests.R` | List all ingests with status summary |
 | `extract_categorical_values.R` | Extract distinct categorical values from raw tables |
 | `run_extract_categorical_values.R` | Runner script for categorical value extraction |
+| `view_validated_summary.R` | View row counts and column counts for all validated tables |
 
 ### Review Scripts (`r/review/`)
 
