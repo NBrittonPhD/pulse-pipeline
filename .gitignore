@@ -33,6 +33,9 @@ validated/
 # Runtime artifacts
 config/source_params.yml
 
+# Rendered HTML artifacts
+*.html
+
 # Excel temp lock files
 ~$*
 
