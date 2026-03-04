@@ -10,58 +10,54 @@
     "tables": [
       {
         "name": "governance.structure_qc_table",
-        "purpose": "Schema validation issues. One row per issue detected during Step 3.",
+        "purpose": "Schema validation issues. One row per issue detected during Step 3. Append-only.",
         "ddl_file": "sql/ddl/create_STRUCTURE_QC_TABLE.sql",
-        "key_columns": ["qc_id", "ingest_id", "source_id", "source_type", "lake_table_name", "lake_variable_name", "issue_code", "issue_type", "severity", "is_blocking", "expected_value", "observed_value", "check_run_at", "created_at", "created_by"]
+        "key_columns": ["qc_issue_id", "ingest_id", "source_id", "source_type", "schema_version", "lake_table_name", "lake_variable_name", "issue_code", "issue_type", "issue_group", "severity", "is_blocking", "issue_message", "expected_value", "observed_value", "expected_schema_hash", "observed_schema_hash", "check_context", "check_run_at", "created_at", "created_by", "notes"]
       },
       {
         "name": "reference.metadata",
         "purpose": "Dictionary definitions synced from CURRENT_core_metadata_dictionary.xlsx. One row per (lake_table_name, lake_variable_name, source_type).",
         "ddl_file": "sql/ddl/recreate_METADATA_v2.sql",
-        "key_columns": ["lake_table_name", "lake_variable_name", "source_type", "data_type", "target_type", "is_required", "version_number", "is_active", "created_at", "updated_at"]
+        "key_columns": ["lake_table_name", "lake_variable_name", "source_type", "data_type", "target_type", "is_required", "variable_label", "variable_definition", "value_labels", "version_number", "is_active", "created_at", "updated_at"]
       }
     ]
+  },
+  "configs": {
+    "metadata_dictionary": {
+      "file": "reference/CURRENT_core_metadata_dictionary.xlsx",
+      "usage": "Master dictionary defining expected schema for all lake tables. Synced to reference.metadata by Step 4."
+    }
   },
   "functions": [
     {
       "name": "validate_schema",
       "file": "r/steps/validate_schema.R",
       "category": "step_logic",
-      "description": "Step 3 orchestrator: load expected schema, compare all raw tables for an ingest batch, write issues to structure_qc_table.",
-      "calls": ["DBI::dbGetQuery", "DBI::dbWriteTable", "compare_fields", "dplyr"],
+      "description": "Step 3 orchestrator: verify ingest_id, load expected schema from reference.metadata, compare all raw tables, write issues to structure_qc_table.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbWriteTable", "compare_fields", "dplyr::filter", "dplyr::bind_rows"],
       "called_by": ["3_validate_schema.R", "tests"]
     },
     {
       "name": "compare_fields",
       "file": "r/utilities/compare_fields.R",
       "category": "utility",
-      "description": "Compare expected vs observed schema for a single table. Detects missing columns, extra columns, type mismatches, and target type discrepancies.",
-      "calls": ["dplyr", "tibble"],
+      "description": "Pure function. Compare expected vs observed schema for a single table. Detects missing columns, extra columns, type mismatches, and target type discrepancies.",
+      "calls": ["dplyr::filter", "dplyr::left_join", "tibble::tibble"],
       "called_by": ["validate_schema", "tests"]
-    },
-    {
-      "name": "sync_metadata",
-      "file": "r/reference/sync_metadata.R",
-      "category": "reference_loader",
-      "description": "Synchronize expected schema definitions from Excel into reference.metadata table.",
-      "calls": ["DBI::dbWriteTable", "DBI::dbExecute", "readxl::read_excel", "dplyr"],
-      "called_by": ["run_sync_metadata.R", "manual_use"]
     }
   ],
   "scripts": [
     {
       "path": "r/scripts/3_validate_schema.R",
-      "purpose": "Human-friendly Step 3 entry: set ingest_id, call validate_schema(), print summary."
+      "purpose": "Human-friendly Step 3 entry: set ingest_id, optionally sync metadata, call validate_schema(), print summary."
     },
     {
-      "path": "r/reference/run_sync_metadata.R",
-      "purpose": "User script to sync expected schema dictionary from Excel into reference.metadata."
-    }
-  ],
-  "reference_files": [
+      "path": "r/review/review_step3_validation.R",
+      "purpose": "Review script for examining Step 3 validation results."
+    },
     {
-      "path": "reference/expected_schema_dictionary.xlsx",
-      "purpose": "Governed Excel file defining expected schema for all lake tables."
+      "path": "r/steps/run_step3_build_expected_schema_dictionary.R",
+      "purpose": "Step 3A wrapper: build expected schema dictionary from ingest_dictionary and Postgres metadata."
     }
   ],
   "tests": {
@@ -74,7 +70,6 @@
     "schema_comparison_working": true,
     "issue_logging_working": true,
     "halt_on_error_working": true,
-    "metadata_sync_working": true,
     "unit_tests_pass": true
   }
 }

@@ -29,9 +29,9 @@ log_batch_ingest(
 **Returns:** TRUE (invisible)
 
 **Side Effects:**
-- Inserts one row into `governance.batch_log`
-- Inserts `"pending"` rows into `governance.ingest_file_log` (one per file)
-- Stops if `ingest_id` already exists in `batch_log`
+- Inserts one row into `governance.batch_log` with status `"started"`
+- Inserts `"pending"` rows into `governance.ingest_file_log` (one per file, with `file_name` and `file_path`)
+- Stops with error if `ingest_id` already exists in `batch_log`
 
 ---
 
@@ -39,7 +39,7 @@ log_batch_ingest(
 
 **File:** `r/steps/log_batch_ingest.R`
 
-**Purpose:** Step 2B. Iterates through pending files, calls `ingest_one_file()` for each, updates file-level lineage, and finalizes the batch status.
+**Purpose:** Step 2B. Iterates through pending files, calls `ingest_one_file()` for each, updates file-level lineage, finalizes batch status, and optionally promotes to staging.
 
 **Signature:**
 ```r
@@ -55,15 +55,15 @@ ingest_batch(
 
 **Returns:** List with:
 - `ingest_id`: character
-- `status`: "success" / "partial" / "error"
+- `status`: `"success"` / `"partial"` / `"error"`
 - `n_files`: integer total files
 - `n_success`: integer successful ingests
 - `n_error`: integer failed ingests
 
 **Side Effects:**
 - Calls `ingest_one_file()` for each pending file
-- Updates `governance.ingest_file_log` rows with results (row_count, checksum, file_size_bytes, load_status)
-- Updates `governance.batch_log` with final status and counts
+- Updates `governance.ingest_file_log` rows with results (`row_count`, `checksum`, `file_size_bytes`, `load_status`)
+- Updates `governance.batch_log` with final status (`files_success`, `files_error`, `batch_completed_at_utc`)
 - When `type_decisions` is provided: promotes each unique successfully ingested raw table to `staging.<lake_table>` via `promote_to_staging()`
 
 ---
@@ -86,32 +86,63 @@ ingest_one_file(
 **Returns (success):**
 ```r
 list(
-    status = "success",
-    lake_table = "table_name",
-    row_count = 100,
+    status          = "success",
+    lake_table      = "table_name",
+    row_count       = 100,
     file_size_bytes = 4096,
-    checksum = "md5_hash"
+    checksum        = "md5_hash",
+    error_message   = NULL
 )
 ```
 
 **Returns (error):**
 ```r
 list(
-    status = "error",
-    lake_table = NA,
-    row_count = NA,
+    status          = "error",
+    lake_table      = NA,
+    row_count       = NA,
     file_size_bytes = NA,
-    checksum = NA,
-    error_message = "description"
+    checksum        = NA,
+    error_message   = "description"
 )
 ```
 
 **Side Effects:**
-- Reads CSV via `vroom`
-- Normalizes headers to lowercase
-- Maps source variables to lake variables per `reference.ingest_dictionary`
+- Reads CSV via `vroom` with all columns as character (`cols(.default = "c")`)
+- Normalizes headers via `normalize_name()`
+- Loads and filters `reference.ingest_dictionary` by `source_type`
+- Resolves `lake_table` from file name via dictionary `source_table_name` matching
+- Maps source variables to lake variables using dictionary mappings
 - Appends to `raw.<lake_table>` (creates table if missing via `align_df_to_raw_table()`)
-- Computes MD5 checksum via `digest`
+- Computes MD5 checksum via `digest::digest()`
+
+---
+
+### `run_step2_batch_logging()`
+
+**File:** `r/steps/run_step2_batch_logging.R`
+
+**Purpose:** Step 2 wrapper executed by the pipeline runner. Derives `source_type` from `reference.ingest_dictionary`, calls `log_batch_ingest()` and `ingest_batch()`, and records step completion.
+
+**Signature:**
+```r
+run_step2_batch_logging(
+    con,                    # DBIConnection (required)
+    ingest_id,              # character: unique batch identifier (required)
+    settings = NULL         # list: pipeline settings (optional)
+)
+```
+
+**Returns:** List (the return value from `ingest_batch()`)
+
+**Side Effects:**
+- Loads `source_id` from `config/source_params.yml` via `load_source_params()`
+- Derives `source_type` by matching incoming file names against `reference.ingest_dictionary`
+- Calls `log_batch_ingest()` with discovered files
+- Calls `ingest_batch()` to perform ingestion (without `type_decisions` — staging promotion does not occur in the runner path)
+- Writes `STEP_002` definition to `governance.pipeline_step` via `write_pipeline_step()`
+
+**Note:** Staging promotion via `promote_to_staging()` only occurs when running `2_ingest_and_log_files.R` directly (where `type_decisions` is loaded from `type_decision_table.xlsx`). The runner path does not load type decisions and therefore does not promote to staging.
 
 ---
 
@@ -137,6 +168,25 @@ get_ingest_dict(
 
 ---
 
+### `pick_one()`
+
+**File:** `r/steps/ingest.R`
+
+**Purpose:** Utility to extract a single scalar value from a vector of potential lake table matches. Returns the first unique non-empty value, or `NA` if none found.
+
+**Signature:**
+```r
+pick_one(
+    x                       # character vector: candidate values (required)
+)
+```
+
+**Returns:** Single character value or `NA_character_`
+
+**Side Effects:** None (pure function)
+
+---
+
 ### `align_df_to_raw_table()`
 
 **File:** `r/steps/ingest.R`
@@ -155,9 +205,9 @@ align_df_to_raw_table(
 **Returns:** Aligned data.frame with columns reordered to match table structure
 
 **Side Effects:**
-- Creates the raw table if it does not exist
-- Adds missing columns to the table as TEXT
-- Adds missing columns to the data.frame as NA
+- Creates the raw table via `DBI::dbWriteTable()` if it does not exist (returns immediately)
+- Adds missing columns to the existing table as TEXT via `ALTER TABLE ADD COLUMN`
+- Adds missing columns to the data.frame as `NA_character_`
 
 ---
 
@@ -165,7 +215,7 @@ align_df_to_raw_table(
 
 **File:** `r/build_tools/promote_to_staging.R`
 
-**Purpose:** Promote a single `raw.<lake_table>` to `staging.<lake_table>` by SQL CAST using target types from the type_decision_table. Called automatically by `ingest_batch()` when `type_decisions` is provided.
+**Purpose:** Promotes a single `raw.<lake_table>` to `staging.<lake_table>` by SQL CAST using target types from the type_decision_table. Called automatically by `ingest_batch()` when `type_decisions` is provided.
 
 **Signature:**
 ```r
@@ -190,6 +240,9 @@ list(
 ```
 
 **Side Effects:**
+- Verifies `raw.<table>` exists
+- Gets column names from `information_schema.columns`
+- Looks up target type per column (`final_type` -> `suggested_type` -> `TEXT` fallback)
 - Drops `staging.<table>` if it exists
 - Creates `staging.<table>` via `CREATE TABLE AS SELECT CAST(...)` from `raw.<table>`
 - Executes within a transaction (BEGIN / DROP / CREATE / COMMIT); rolls back on error
@@ -205,8 +258,15 @@ list(
     └── ingest_batch() (orchestrator)
             ├── ingest_one_file() (per-file ingest)
             │       ├── get_ingest_dict() (dictionary lookup)
+            │       ├── pick_one() (lake table resolution)
             │       └── align_df_to_raw_table() (table alignment)
             └── promote_to_staging() (raw → staging type casting, optional)
+
+run_step2_batch_logging() (runner wrapper)
+    ├── load_source_params()
+    ├── log_batch_ingest()
+    ├── ingest_batch()
+    └── write_pipeline_step()
 ```
 
 ---
@@ -218,9 +278,12 @@ list(
 Ingest-level summary. One row per batch ingestion event.
 
 **Key Columns:**
-- `ingest_id` (PK), `source_id`, `source_type`
+- `ingest_id` (PK) — unique batch identifier
+- `source_id` (FK) — registered source
+- `ingest_timestamp` — when the batch was created
+- `status` — `started` / `success` / `partial` / `error`
+- `error_message` — error details (if applicable)
 - `file_count`, `files_success`, `files_error`
-- `status` (success / partial / error)
 - `batch_started_at_utc`, `batch_completed_at_utc`
 
 ### `governance.ingest_file_log`
@@ -228,8 +291,10 @@ Ingest-level summary. One row per batch ingestion event.
 File-level lineage. One row per file per batch.
 
 **Key Columns:**
-- `ingest_file_id` (PK), `ingest_id` (FK)
-- `file_name`, `file_path`, `lake_table_name`
-- `load_status` (pending / success / error)
+- `ingest_file_id` (PK, BIGSERIAL) — auto-incrementing surrogate key
+- `ingest_id` (FK) — links to `governance.batch_log`
+- `file_name`, `file_path` — file identity
+- `lake_table_name` — resolved destination table
+- `load_status` — `pending` / `success` / `error` / `skipped`
 - `row_count`, `file_size_bytes`, `checksum`
-- `completed_at_utc`
+- `logged_at_utc`, `completed_at_utc`

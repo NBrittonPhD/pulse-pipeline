@@ -8,11 +8,8 @@
 ### Run Step 3 (Schema Validation)
 
 ```r
-# 1. Edit the wrapper script with your ingest_id
-#    Open: r/scripts/3_validate_schema.R
-#    Set: ingest_id <- "ING_your_source_20260107_123456"
-
-# 2. Run the script
+# 1. Edit the USER INPUT SECTION in the script
+# 2. Run:
 source("r/scripts/3_validate_schema.R")
 ```
 
@@ -22,9 +19,11 @@ source("r/scripts/3_validate_schema.R")
 
 Before running Step 3:
 
-1. **Step 1 completed**: Source must be registered in `governance.source_registry`
-2. **Step 2 completed**: Files must be ingested with valid `ingest_id` in `governance.batch_log`
+1. **Step 1 complete**: Source must be registered in `governance.source_registry`
+2. **Step 2 complete**: Files must be ingested with valid `ingest_id` in `governance.batch_log`
 3. **Metadata synced**: `reference.metadata` must be populated (run Step 4: `source("r/scripts/4_sync_metadata.R")`)
+4. **PostgreSQL running**: The PULSE database must be accessible
+5. **Environment variables set**: `PULSE_DB`, `PULSE_HOST`, `PULSE_USER`, `PULSE_PW`
 
 ---
 
@@ -33,12 +32,16 @@ Before running Step 3:
 In `r/scripts/3_validate_schema.R`:
 
 ```r
-# The ingest_id from Step 2
-ingest_id <- "ING_trauma_registry2026_toy_20260107_114716"
+# The ingest_id from Step 2 that you want to validate
+ingest_id <- "ING_trauma_registry2026_toy_20260128_170308"   # EDIT ME
 
-# Source type (for logging)
-source_type <- "TRAUMA_REGISTRY"
+# Source type (for logging; optional if derivable from batch_log)
+source_type <- "CISIR"   # EDIT ME
+```
 
+### Behavior Settings
+
+```r
 # Stop on critical errors? (TRUE recommended for production)
 halt_on_error <- FALSE
 
@@ -50,34 +53,32 @@ sync_metadata_first <- FALSE
 
 ## Common Tasks
 
-### Sync Metadata from Excel
+### Validate a Batch
 
-If you've updated `CURRENT_core_metadata_dictionary.xlsx`:
+```r
+source("r/scripts/3_validate_schema.R")
+```
+
+### Sync Metadata Before Validation
+
+Set `sync_metadata_first <- TRUE` in the script, or run Step 4 separately:
 
 ```r
 source("r/scripts/4_sync_metadata.R")
-```
-
-Or programmatically:
-
-```r
-source("pulse-init-all.R")
-source("r/reference/sync_metadata.R")
-con <- connect_to_pulse()
-sync_metadata(con, dict_path = "reference/CURRENT_core_metadata_dictionary.xlsx")
-DBI::dbDisconnect(con)
 ```
 
 ### View Validation Issues
 
 ```sql
 -- All issues for a batch
-SELECT * FROM governance.structure_qc_table
+SELECT lake_table_name, lake_variable_name, issue_code,
+       severity, expected_value, observed_value
+FROM governance.structure_qc_table
 WHERE ingest_id = 'ING_your_source_20260107_123456'
 ORDER BY severity, lake_table_name;
 
 -- Summary by severity
-SELECT severity, COUNT(*) as n_issues
+SELECT severity, COUNT(*) AS n_issues
 FROM governance.structure_qc_table
 WHERE ingest_id = 'ING_your_source_20260107_123456'
 GROUP BY severity;
@@ -85,15 +86,18 @@ GROUP BY severity;
 
 ### Re-run Validation
 
-```r
-# Clear old issues first
-DBI::dbExecute(con, "
-    DELETE FROM governance.structure_qc_table
-    WHERE ingest_id = 'ING_your_source_20260107_123456'
-")
+```sql
+-- Clear old issues first
+DELETE FROM governance.structure_qc_table
+WHERE ingest_id = 'ING_your_source_20260107_123456';
+```
 
-# Then re-run Step 3
-source("r/scripts/3_validate_schema.R")
+Then re-run the script.
+
+### Review Results
+
+```r
+source("r/review/review_step3_validation.R")
 ```
 
 ---
@@ -116,37 +120,69 @@ result$issues           # Tibble with all issue details
 
 ### Issue Codes
 
-| Code | Meaning |
-|------|---------|
-| `SCHEMA_MISSING_COLUMN` | Required column not found in table |
-| `SCHEMA_UNEXPECTED_COLUMN` | Column exists but not in expected schema |
-| `SCHEMA_TYPE_MISMATCH` | Data type differs from expected |
-| `TYPE_TARGET_MISMATCH` | Observed type does not match target staging type |
-| `TYPE_TARGET_MISSING` | No target type defined in type_decision_table |
+| Code | Severity | Meaning |
+|------|----------|---------|
+| `SCHEMA_MISSING_COLUMN` | critical | Required column not found in observed table |
+| `SCHEMA_UNEXPECTED_COLUMN` | critical | Column exists in table but not in expected schema |
+| `SCHEMA_TYPE_MISMATCH` | warning | Data type differs between expected and observed |
+| `TYPE_TARGET_MISMATCH` | warning | Observed type does not match target staging type |
+| `TYPE_TARGET_MISSING` | warning | No target type defined in type_decision_table |
+
+### Console Output
+
+On completion, the script prints:
+
+```
+=================================================================
+  STEP 3 SUMMARY
+=================================================================
+  Status:           SUCCESS
+  Tables Validated: 15
+  Total Issues:     23
+  Critical:         0
+  Warnings:         23
+  Info:             0
+  Duration:         2.45 seconds
+=================================================================
+```
 
 ---
 
 ## Troubleshooting
 
-### "ingest_id not found in batch_log"
+### "ingest_id '...' not found in governance.batch_log."
 
-The ingest_id must exist in `governance.batch_log`. Check:
+The `ingest_id` must exist in `governance.batch_log`. Check recent batches:
+
 ```sql
-SELECT * FROM governance.batch_log ORDER BY created_at DESC LIMIT 5;
+SELECT ingest_id, source_id, status
+FROM governance.batch_log
+ORDER BY batch_started_at_utc DESC LIMIT 5;
 ```
 
-### "No active metadata found"
+### "No active metadata found in reference.metadata. Run sync_metadata() first."
 
-Run Step 4 to populate `reference.metadata`:
+The `reference.metadata` table is empty or has no active rows. Run Step 4 to populate it:
+
 ```r
 source("r/scripts/4_sync_metadata.R")
 ```
 
-### "No expected schema for table"
+### "No active metadata found for source_type '...'."
 
-The table isn't defined in `CURRENT_core_metadata_dictionary.xlsx` for this source type. Either:
-1. Add the table/variable to the Excel dictionary and re-sync (Step 4)
-2. Or this is expected (unmapped source table)
+The `source_type` doesn't match any rows in `reference.metadata`. Check available source types:
+
+```sql
+SELECT DISTINCT source_type FROM reference.metadata WHERE is_active = TRUE;
+```
+
+### "Could not derive source_type for ingest '...'."
+
+The system couldn't automatically determine the source type. Pass `source_type` explicitly in the script.
+
+### "No expected schema for '...' Skipping."
+
+The table isn't defined in `reference.metadata` for this source type. Either add it to the Excel dictionary and re-sync (Step 4), or this is expected for unmapped source tables.
 
 ---
 
@@ -155,10 +191,13 @@ The table isn't defined in `CURRENT_core_metadata_dictionary.xlsx` for this sour
 | Purpose | Path |
 |---------|------|
 | User script | `r/scripts/3_validate_schema.R` |
-| Step function | `r/steps/validate_schema.R` |
-| Field comparison | `r/utilities/compare_fields.R` |
-| Metadata sync | `r/reference/sync_metadata.R` |
+| Validation orchestrator | `r/steps/validate_schema.R` |
+| Field comparison utility | `r/utilities/compare_fields.R` |
+| Results review | `r/review/review_step3_validation.R` |
+| Metadata sync (Step 4) | `r/reference/sync_metadata.R` |
+| Pipeline runner | `r/runner.R` |
+| Bootstrap | `pulse-init-all.R` |
 | Metadata dictionary | `reference/CURRENT_core_metadata_dictionary.xlsx` |
+| Structure QC DDL | `sql/ddl/create_STRUCTURE_QC_TABLE.sql` |
 | Metadata DDL | `sql/ddl/recreate_METADATA_v2.sql` |
-| QC table DDL | `sql/ddl/create_STRUCTURE_QC_TABLE.sql` |
 | Unit tests | `tests/testthat/test_step3_schema_validation.R` |

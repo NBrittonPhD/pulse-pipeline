@@ -31,8 +31,8 @@
     ],
     "seed_data": [
       {
-        "file": "sql/inserts/insert_PIPELINE_STEP.sql",
-        "notes": "Inserts STEP_001–STEP_010 into governance.pipeline_step."
+        "file": "sql/inserts/pipeline_steps/STEP_001_register_source.sql",
+        "notes": "Inserts STEP_001 definition into governance.pipeline_step."
       }
     ]
   },
@@ -135,7 +135,7 @@
       "name": "write_pipeline_step",
       "file": "r/utilities/write_pipeline_step.R",
       "category": "governance",
-      "description": "Writes pipeline step metadata into governance.pipeline_step.",
+      "description": "Upserts pipeline step definition (configuration, not per-run history) into governance.pipeline_step.",
       "calls": "DBI::dbExecute",
       "called_by": ["run_step1_register_source", "future_step_wrappers"]
     },

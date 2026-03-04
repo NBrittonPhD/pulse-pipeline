@@ -18,26 +18,32 @@ Step 4 ensures that the database-resident metadata dictionary (`reference.metada
 
 ## Step-by-Step Summary
 
-1. **Load dictionary from Excel.**
+1. **User edits input parameters.**
+   In `r/scripts/4_sync_metadata.R`, set `dict_path` and `source_type_filter`.
+
+2. **Initialize PULSE system.**
+   `pulse-init-all.R` sets up DB connection infrastructure and sources required functions.
+
+3. **Load dictionary from Excel.**
    `load_metadata_dictionary()` reads `CURRENT_core_metadata_dictionary.xlsx`, validates required columns, standardizes Y/N fields to boolean.
 
-2. **Query current database state.**
+4. **Query current database state.**
    `sync_metadata()` reads all active rows from `reference.metadata`.
 
-3. **Compare dictionaries.**
+5. **Compare dictionaries.**
    `compare_metadata()` performs field-level diff, classifying every change as INITIAL, ADD, UPDATE, or REMOVE.
 
-4. **Determine version number.**
+6. **Determine version number.**
    New version = MAX(version_number) + 1.
 
-5. **Write change history.**
+7. **Write change history.**
    All detected changes are appended to `reference.metadata_history` with the new version number.
 
-6. **Upsert metadata table.**
+8. **Upsert metadata table.**
    New variables are inserted, existing variables are updated, removed variables are soft-deleted (`is_active = FALSE`).
 
-7. **Write audit event.**
-   A summary record is written to `governance.audit_log`.
+9. **Write audit event.**
+   A summary record is written to `governance.audit_log` via `write_audit_event()`.
 
 ---
 
@@ -46,7 +52,7 @@ Step 4 ensures that the database-resident metadata dictionary (`reference.metada
 - Updated `reference.metadata` with new version number
 - Field-level change records in `reference.metadata_history`
 - Audit event in `governance.audit_log`
-- Console summary with version, adds, updates, removes
+- Console summary with version, adds, updates, removes, duration
 
 ---
 
@@ -54,22 +60,25 @@ Step 4 ensures that the database-resident metadata dictionary (`reference.metada
 
 ```mermaid
 flowchart TD
-    A[CURRENT_core_metadata_dictionary.xlsx] --> B[load_metadata_dictionary]
+    A[User runs 4_sync_metadata.R] --> B[pulse-init-all.R]
     B --> C[sync_metadata]
-    C --> D[Query current reference.metadata]
-    D --> E[compare_metadata]
-    E --> F{Changes detected?}
-    F -->|Yes| G[Write reference.metadata_history]
-    F -->|No| H[Skip history write]
-    G --> I[Upsert reference.metadata]
-    H --> I
-    I --> J[Write governance.audit_log]
-    J --> K[Return summary]
+    C --> D[load_metadata_dictionary]
+    D --> E[CURRENT_core_metadata_dictionary.xlsx]
+    E --> F[Query current reference.metadata]
+    F --> G[compare_metadata]
+    G --> H{Changes detected?}
+    H -->|Yes| I[Write reference.metadata_history]
+    H -->|No| J[Skip history write]
+    I --> K[Upsert reference.metadata]
+    J --> K
+    K --> L[Soft-delete removed variables]
+    L --> M[Write governance.audit_log]
+    M --> N[Return summary]
 ```
 
 ---
 
-## Severity / Change Classifications
+## Change Classifications
 
 | Change Type | Meaning |
 |-------------|---------|
@@ -88,9 +97,29 @@ flowchart TD
 - Removed variables soft-deleted (not physically deleted)
 - Audit log event written
 - No duplicate composite keys
+- All unit tests passing
 
 ---
 
 ## Next Step
 
 After Step 4 is complete, proceed to **Step 5: Data Profiling** (`r/scripts/5_profile_data.R`).
+
+---
+
+## Files Involved
+
+| Component | Path |
+|-----------|------|
+| User script | `r/scripts/4_sync_metadata.R` |
+| Sync orchestrator | `r/reference/sync_metadata.R` |
+| Dictionary loader | `r/reference/load_metadata_dictionary.R` |
+| Comparison engine | `r/utilities/compare_metadata.R` |
+| Version helper | `r/reference/get_current_metadata_version.R` |
+| Audit event writer | `r/steps/write_audit_event.R` |
+| Results review | `r/review/review_step4_metadata.R` |
+| Bootstrap | `pulse-init-all.R` |
+| Metadata dictionary | `reference/CURRENT_core_metadata_dictionary.xlsx` |
+| Metadata DDL | `sql/ddl/recreate_METADATA_v2.sql` |
+| History DDL | `sql/ddl/create_METADATA_HISTORY.sql` |
+| Unit tests | `tests/testthat/test_step4_metadata_sync.R` |

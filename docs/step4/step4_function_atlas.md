@@ -34,9 +34,11 @@ sync_metadata(
 - `rows_synced`: integer count of rows written
 
 **Side Effects:**
+- Reads from `reference.metadata` (active rows)
 - Writes to `reference.metadata` (upsert via temp table + INSERT ON CONFLICT)
+- Soft-deletes removed variables (`is_active = FALSE`)
 - Appends to `reference.metadata_history` (field-level change records)
-- Appends to `governance.audit_log` (sync event summary)
+- Appends to `governance.audit_log` (sync event summary via `write_audit_event()`)
 
 ---
 
@@ -44,7 +46,7 @@ sync_metadata(
 
 **File:** `r/reference/load_metadata_dictionary.R`
 
-**Purpose:** Load the Excel dictionary and standardize it for database synchronization. Validates required columns, standardizes Y/N fields to boolean, checks for duplicate composite keys.
+**Purpose:** Load the Excel dictionary and standardize it for database synchronization. Validates required columns, standardizes Y/N fields to boolean, ensures numeric columns are numeric, checks for duplicate composite keys.
 
 **Signature:**
 ```r
@@ -106,10 +108,38 @@ get_current_metadata_version(
 
 ---
 
+## Cross-Step Dependencies
+
+### `write_audit_event()`
+
+**File:** `r/steps/write_audit_event.R`
+
+**Purpose:** Shared audit logger. Inserts a record into `governance.audit_log` with a UUID-based `audit_id`, JSON-encoded details, and the executing database user.
+
+**Signature:**
+```r
+write_audit_event(
+    con,                        # DBIConnection (required)
+    ingest_id = NULL,           # character: batch identifier (optional)
+    event_type,                 # character: e.g. "metadata_sync" (required)
+    object_type,                # character: e.g. "table" (required)
+    object_name,                # character: e.g. "reference.metadata" (required)
+    details = NULL,             # list: arbitrary metadata (JSON-encoded) (optional)
+    status = NULL               # character: e.g. "success" (optional)
+)
+```
+
+**Returns:** `audit_id` (invisible).
+
+**Step 4 Usage:** Called by `sync_metadata()` with `event_type = "metadata_sync"`, `object_name = "reference.metadata"`, and details containing version number, dict path, source filter, and change counts.
+
+---
+
 ## Dependency Graph
 
 ```
 4_sync_metadata.R (user script)
+    ├── pulse-init-all.R (bootstrap)
     └── sync_metadata.R (step function)
             ├── load_metadata_dictionary.R (Excel loader)
             ├── compare_metadata.R (field-level diff)
@@ -128,19 +158,20 @@ Dictionary definitions synced from `CURRENT_core_metadata_dictionary.xlsx`. One 
 **Key Columns:**
 - `lake_table_name`, `lake_variable_name`, `source_type` (composite PK)
 - `source_table_name`, `source_variable_name`, `data_type`
+- `target_type` — target SQL type (populated by type_decision_table, not by sync)
 - `variable_label`, `variable_definition`, `value_labels`
 - `variable_unit`, `valid_min`, `valid_max`, `allowed_values`
 - `is_identifier`, `is_phi`, `is_required`
 - `validated_table_target`, `validated_variable_name`
 - `notes`, `needs_further_review`
-- `version_number`, `is_active`, `created_at`, `updated_at`
+- `version_number`, `is_active`, `created_at`, `updated_at`, `created_by`
 
 ### `reference.metadata_history`
 
 Field-level change audit trail. One row per field changed per variable per version.
 
 **Key Columns:**
-- `history_id` (PK, serial)
+- `history_id` (PK, SERIAL)
 - `version_number`, `lake_table_name`, `lake_variable_name`, `source_type`
 - `field_changed`, `old_value`, `new_value`
 - `change_type` (INITIAL / ADD / UPDATE / REMOVE)

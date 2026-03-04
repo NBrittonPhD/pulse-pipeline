@@ -13,14 +13,14 @@ This reference lists all functions used in Step 5, grouped by purpose, with deta
 
 **File:** `r/steps/profile_data.R`
 
-**Purpose:** Main Step 5 orchestrator. Loads profiling config, verifies the ingest exists, retrieves tables from the file log, deletes prior profiling data for idempotency, profiles each table, writes results to 5 governance tables, computes overall score, and logs an audit event.
+**Purpose:** Main Step 5 orchestrator. Loads profiling config, verifies the ingest exists, retrieves tables from the file log (or transform log for validated schema), deletes prior profiling data for idempotency, profiles each table, writes results to 5 governance tables, computes overall score, and logs an audit event.
 
 **Signature:**
 ```r
 profile_data(
     con,                        # DBIConnection (required)
     ingest_id,                  # character: batch identifier (required)
-    schema_to_profile = "raw",  # character: "raw" or "staging"
+    schema_to_profile = "raw",  # character: "raw", "staging", or "validated"
     config_path = NULL          # character: path to profiling_settings.yml (optional)
 )
 ```
@@ -35,13 +35,14 @@ profile_data(
 - `overall_score`: character quality score (worst per-table score)
 
 **Side Effects:**
+- Reads from `governance.batch_log`, `governance.ingest_file_log` (raw/staging) or `governance.transform_log` (validated)
 - Deletes prior profiling data for `(ingest_id, schema_name)` from all 5 profiling tables
 - Writes to `governance.data_profile` (append)
 - Writes to `governance.data_profile_distribution` (append)
 - Writes to `governance.data_profile_sentinel` (append)
 - Writes to `governance.data_profile_issue` (append)
 - Writes to `governance.data_profile_summary` (append)
-- Writes to `governance.audit_log` (append)
+- Writes to `governance.audit_log` (append via `write_audit_event()`)
 
 ---
 
@@ -55,7 +56,7 @@ profile_data(
 ```r
 profile_table(
     con,            # DBIConnection (for reading the table data)
-    schema_name,    # character: "raw" or "staging"
+    schema_name,    # character: "raw", "staging", or "validated"
     table_name,     # character: table name without schema prefix
     ingest_id,      # character: batch identifier
     config          # list from load_profiling_config()
@@ -168,7 +169,7 @@ generate_issues(
 
 **File:** `r/profiling/calculate_quality_score.R`
 
-**Purpose:** Rate a table's overall quality based on its worst missingness percentage and count of critical issues. Returns one of four quality levels.
+**Purpose:** Rate a table's overall quality based on its worst missingness percentage and count of critical issues. Returns one of four quality levels. Handles NULL/NA inputs defensively by returning "Needs Review".
 
 **Signature:**
 ```r
@@ -227,10 +228,23 @@ infer_column_type(
 
 ---
 
+## Cross-Step Dependencies
+
+### `write_audit_event()`
+
+**File:** `r/steps/write_audit_event.R`
+
+**Purpose:** Shared audit logger. Inserts a record into `governance.audit_log` with a UUID-based `audit_id`, JSON-encoded details, and the executing database user.
+
+**Step 5 Usage:** Called by `profile_data()` with `event_type = "data_profiling"`, `object_name = "{schema}.*"`, and details containing tables_profiled, variables_profiled, sentinels_detected, issue counts, and overall_score.
+
+---
+
 ## Dependency Graph
 
 ```
 5_profile_data.R (user script)
+    ├── pulse-init-all.R (bootstrap)
     └── profile_data.R (step orchestrator)
             ├── load_profiling_config.R (config loader)
             ├── profile_table.R (table-level profiler)
@@ -253,7 +267,7 @@ infer_column_type(
 Variable-level missingness profiling. One row per column per table per ingest.
 
 **Key Columns:**
-- `profile_id` (PK, serial), `ingest_id`, `schema_name`, `table_name`, `variable_name`
+- `profile_id` (PK, SERIAL), `ingest_id` (FK), `schema_name`, `table_name`, `variable_name`
 - `inferred_type` (numeric, categorical, date, identifier)
 - `total_count`, `valid_count`, `na_count`, `empty_count`, `whitespace_count`, `sentinel_count`
 - `na_pct`, `empty_pct`, `whitespace_pct`, `sentinel_pct`
@@ -265,7 +279,7 @@ Variable-level missingness profiling. One row per column per table per ingest.
 Distribution statistics. One row per column per table per ingest.
 
 **Key Columns:**
-- `distribution_id` (PK, serial), `ingest_id`, `schema_name`, `table_name`, `variable_name`
+- `distribution_id` (PK, SERIAL), `ingest_id` (FK), `schema_name`, `table_name`, `variable_name`
 - `distribution_type` (numeric, categorical)
 - `stat_min`, `stat_max`, `stat_mean`, `stat_median`, `stat_sd`, `stat_q25`, `stat_q75`, `stat_iqr`
 - `top_values_json`, `mode_value`, `mode_count`, `mode_pct`
@@ -275,7 +289,7 @@ Distribution statistics. One row per column per table per ingest.
 Detected sentinel/placeholder values. Zero or more rows per column.
 
 **Key Columns:**
-- `sentinel_id` (PK, serial), `ingest_id`, `schema_name`, `table_name`, `variable_name`
+- `sentinel_id` (PK, SERIAL), `ingest_id` (FK), `schema_name`, `table_name`, `variable_name`
 - `sentinel_value`, `sentinel_count`, `sentinel_pct`
 - `detection_method` (config_list, frequency_analysis)
 - `confidence` (high, medium)
@@ -285,8 +299,8 @@ Detected sentinel/placeholder values. Zero or more rows per column.
 Quality issues flagged during profiling. Zero or more rows per column.
 
 **Key Columns:**
-- `issue_id` (PK, serial), `ingest_id`, `schema_name`, `table_name`, `variable_name`
-- `issue_type`, `severity` (critical, warning, info)
+- `issue_id` (PK, SERIAL), `ingest_id` (FK), `schema_name`, `table_name`, `variable_name`
+- `issue_type`, `severity` (critical, warning, info — CHECK constraint)
 - `description`, `value`, `recommendation`
 
 ### `governance.data_profile_summary`
@@ -294,7 +308,7 @@ Quality issues flagged during profiling. Zero or more rows per column.
 Per-table quality summary. One row per table per ingest.
 
 **Key Columns:**
-- `summary_id` (PK, serial), `ingest_id`, `schema_name`, `table_name`
+- `summary_id` (PK, SERIAL), `ingest_id` (FK), `schema_name`, `table_name`
 - `row_count`, `variable_count`
 - `avg_valid_pct`, `min_valid_pct`, `max_missing_pct`
 - `critical_issue_count`, `warning_issue_count`, `info_issue_count`

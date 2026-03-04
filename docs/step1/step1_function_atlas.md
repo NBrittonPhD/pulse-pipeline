@@ -137,21 +137,26 @@ write_audit_event(
 
 **File:** `r/utilities/write_pipeline_step.R`
 
-**Purpose:** Records or updates a pipeline step definition or execution metadata in `governance.pipeline_step`.
+**Purpose:** Upserts a pipeline step definition in `governance.pipeline_step`. This is configuration, not per-run history — it ensures the step table always reflects the current definition of each step (order, name, type, code snippet, enabled status).
 
 **Signature:**
 ```r
 write_pipeline_step(
     con,                    # DBIConnection (required)
     step_id,                # character: step identifier, e.g., "STEP_001" (required)
-    ...                     # additional step metadata fields
+    step_order,             # integer: execution order (required)
+    step_name,              # character: human-readable step name (required)
+    step_description,       # character: what the step does (required)
+    step_type,              # character: "R", "SQL", or "RMD" (required)
+    code_snippet,           # character: function or file to execute (required)
+    enabled = TRUE          # logical: whether step is active (default TRUE)
 )
 ```
 
 **Returns:** TRUE (invisible)
 
 **Side Effects:**
-- Inserts or updates a row in `governance.pipeline_step`
+- Inserts a new row if `step_id` does not exist, or updates metadata and bumps `last_modified_utc` if it does
 
 ---
 
@@ -301,3 +306,51 @@ pulse_launch(
                                     │       └── write_audit_event()
                                     └── write_pipeline_step()
 ```
+
+---
+
+## Database Tables
+
+### `governance.source_registry`
+
+Authoritative record of every onboarded data source. One row per source.
+
+**Key Columns:**
+- `source_id` (PK) — unique, machine-readable source identifier
+- `source_name` — human-readable name
+- `system_type` — upstream data format (controlled vocabulary)
+- `update_frequency` — expected cadence (controlled vocabulary)
+- `data_owner` — responsible party
+- `ingest_method` — ingestion pathway (controlled vocabulary)
+- `expected_schema_version` — semantic version string
+- `retention_policy` — free-text retention description (nullable)
+- `pii_classification` — data sensitivity level (controlled vocabulary)
+- `active` — boolean flag to enable/disable the source
+- `created_at_utc`, `last_modified_utc` — timestamps
+- `created_by` — database user (DEFAULT SESSION_USER)
+
+### `governance.audit_log`
+
+Structured governance event record. One row per event.
+
+**Key Columns:**
+- `audit_id` (PK) — UUID-based unique identifier (`AUD_` prefix)
+- `ingest_id` — batch identifier (nullable; NULL for source registration events)
+- `action` — pipe-delimited string (e.g., `source_registration|success|table|governance.source_registry`)
+- `details` — JSONB payload with event_type, object_type, object_name, status, and payload
+- `executed_by` — database user who triggered the event
+- `executed_at_utc` — when the event occurred (DEFAULT CURRENT_TIMESTAMP)
+
+### `governance.pipeline_step`
+
+Configuration registry for all pipeline steps. One row per step definition.
+
+**Key Columns:**
+- `step_id` (PK) — step identifier (e.g., `STEP_001`)
+- `step_order` — execution sequence number
+- `step_name` — machine-readable step name
+- `step_description` — human-readable description
+- `step_type` — execution type (`R`, `SQL`, or `RMD`)
+- `code_snippet` — function or file to invoke
+- `enabled` — whether the step is active
+- `created_at_utc`, `last_modified_utc` — timestamps

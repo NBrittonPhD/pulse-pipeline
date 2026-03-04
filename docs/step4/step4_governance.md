@@ -39,8 +39,10 @@ Step 4 ensures that all variable definitions in the database are traceable, vers
 
 - `version_number`: Current metadata version
 - `is_active`: TRUE = active variable, FALSE = soft-deleted
+- `target_type`: Target SQL type (populated by type_decision_table, not by sync)
 - `created_at`: Row creation timestamp
 - `updated_at`: Last modified timestamp
+- `created_by`: Database user who created the row (DEFAULT CURRENT_USER)
 
 ### `reference.metadata_history`
 
@@ -55,8 +57,8 @@ Step 4 ensures that all variable definitions in the database are traceable, vers
 ### `governance.audit_log`
 
 - One event per sync operation
-- `event_type`: `metadata_sync`
-- `details`: JSON with version_number, dict_path, total_variables, adds, updates, removes
+- `action`: Pipe-delimited string (`metadata_sync|success|table|reference.metadata`)
+- `details`: JSON with event_type, object_type, object_name, status, and payload containing version_number, dict_path, source_filter, total_variables, initial, adds, updates, removes
 
 ---
 
@@ -67,6 +69,7 @@ Step 4 ensures that all variable definitions in the database are traceable, vers
 1. Same Excel file always produces the same dictionary output
 2. Same `version_number` always maps to the same set of changes in history
 3. Change detection is field-level — only actual value differences are recorded
+4. NAs normalized to empty strings during comparison to avoid NA == NA issues
 
 ### Re-sync
 
@@ -86,6 +89,7 @@ To re-sync from Excel:
 - [ ] Removed variables have `is_active = FALSE` (not physically deleted)
 - [ ] Audit log event exists for each sync operation
 - [ ] No duplicate composite keys in metadata table
+- [ ] All unit tests passing
 
 ---
 
@@ -96,6 +100,7 @@ To re-sync from Excel:
 | Core Metadata Dictionary | `reference/CURRENT_core_metadata_dictionary.xlsx` | Source of truth for variable definitions |
 | Metadata Table | `reference.metadata` | Database-queryable dictionary (synced by Step 4) |
 | Metadata History | `reference.metadata_history` | Field-level change audit trail |
+| Audit Log | `governance.audit_log` | Sync event records |
 | Metadata DDL | `sql/ddl/recreate_METADATA_v2.sql` | Table creation script |
 | History DDL | `sql/ddl/create_METADATA_HISTORY.sql` | History table creation script |
-| Audit Log | `governance.audit_log` | Sync event records |
+| Unit Tests | `tests/testthat/test_step4_metadata_sync.R` | Sync validation tests |

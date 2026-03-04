@@ -11,7 +11,7 @@
         "name": "reference.metadata",
         "purpose": "Dictionary definitions synced from CURRENT_core_metadata_dictionary.xlsx. One row per (lake_table_name, lake_variable_name, source_type).",
         "ddl_file": "sql/ddl/recreate_METADATA_v2.sql",
-        "key_columns": ["lake_table_name", "lake_variable_name", "source_type", "source_table_name", "source_variable_name", "data_type", "variable_label", "variable_definition", "value_labels", "variable_unit", "valid_min", "valid_max", "allowed_values", "is_identifier", "is_phi", "is_required", "validated_table_target", "validated_variable_name", "notes", "needs_further_review", "version_number", "is_active", "created_at", "updated_at"]
+        "key_columns": ["lake_table_name", "lake_variable_name", "source_type", "source_table_name", "source_variable_name", "data_type", "target_type", "variable_label", "variable_definition", "value_labels", "variable_unit", "valid_min", "valid_max", "allowed_values", "is_identifier", "is_phi", "is_required", "validated_table_target", "validated_variable_name", "notes", "needs_further_review", "version_number", "is_active", "created_at", "updated_at", "created_by"]
       },
       {
         "name": "reference.metadata_history",
@@ -20,6 +20,12 @@
         "key_columns": ["history_id", "version_number", "lake_table_name", "lake_variable_name", "source_type", "field_changed", "old_value", "new_value", "change_type", "changed_at", "changed_by"]
       }
     ]
+  },
+  "configs": {
+    "metadata_dictionary": {
+      "file": "reference/CURRENT_core_metadata_dictionary.xlsx",
+      "usage": "Master dictionary defining all variable definitions, types, labels, and validation rules. Source of truth for sync."
+    }
   },
   "functions": [
     {
@@ -34,7 +40,7 @@
       "name": "load_metadata_dictionary",
       "file": "r/reference/load_metadata_dictionary.R",
       "category": "reference_loader",
-      "description": "Load CURRENT_core_metadata_dictionary.xlsx, validate required columns, standardize Y/N to boolean, check for duplicate keys.",
+      "description": "Load CURRENT_core_metadata_dictionary.xlsx, validate required columns, standardize Y/N to boolean, ensure numeric columns, check for duplicate keys.",
       "calls": ["readxl::read_excel", "dplyr"],
       "called_by": ["sync_metadata", "tests"]
     },
@@ -52,13 +58,17 @@
       "category": "utility",
       "description": "Return the current MAX(version_number) from reference.metadata. Returns 0 if empty.",
       "calls": ["DBI::dbGetQuery"],
-      "called_by": ["sync_metadata", "manual use", "tests"]
+      "called_by": ["manual use", "tests"]
     }
   ],
   "scripts": [
     {
       "path": "r/scripts/4_sync_metadata.R",
-      "purpose": "Human-friendly Step 4 entry: set dict_path, call sync_metadata(), print version and change summary."
+      "purpose": "Human-friendly Step 4 entry: set dict_path and source_type_filter, call sync_metadata(), print version and change summary."
+    },
+    {
+      "path": "r/review/review_step4_metadata.R",
+      "purpose": "Review script for examining metadata state, variable counts by source, and change history."
     }
   ],
   "reference_files": [

@@ -8,10 +8,8 @@
 ### Run Step 5 (Data Profiling)
 
 ```r
-# 1. Ensure Steps 1-4 are complete (source registered, data ingested,
-#    schema validated, metadata synced)
-
-# 2. Run the script
+# 1. Edit the USER INPUT SECTION in the script
+# 2. Run:
 source("r/scripts/5_profile_data.R")
 ```
 
@@ -24,6 +22,8 @@ Before running Step 5:
 1. **Steps 1-4 completed**: Source registered, data ingested, schema validated, metadata synced
 2. **Database tables exist**: All 5 `governance.data_profile*` tables (created by DDLs)
 3. **Valid ingest_id**: An ingest batch must exist in `governance.batch_log` with successfully loaded tables in `governance.ingest_file_log`
+4. **PostgreSQL running**: The PULSE database must be accessible
+5. **Environment variables set**: `PULSE_DB`, `PULSE_HOST`, `PULSE_USER`, `PULSE_PW`
 
 ---
 
@@ -35,7 +35,7 @@ In `r/scripts/5_profile_data.R`:
 # The ingest_id from Step 2 (check governance.batch_log for available IDs)
 ingest_id <- "ING_cisir2026_toy_20260128_170000"
 
-# Which schema to profile: "raw" (before harmonization) or "staging" (after)
+# Which schema to profile: "raw", "staging", or "validated"
 schema_to_profile <- "raw"
 
 # Path to profiling config (uses defaults if file missing)
@@ -86,6 +86,10 @@ result <- profile_data(con, ingest_id = "ING_cisir2026_toy_20260128_170000",
 DBI::dbDisconnect(con)
 ```
 
+### Profile Validated Tables
+
+Set `schema_to_profile <- "validated"` in the script. When profiling the `validated` schema, tables are discovered from `governance.transform_log` instead of `governance.ingest_file_log`.
+
 ### Re-profile (Idempotent)
 
 Simply run the same script again with the same `ingest_id`. Prior profiling data is automatically deleted before re-profiling.
@@ -93,9 +97,9 @@ Simply run the same script again with the same `ingest_id`. Prior profiling data
 ### Check Available Ingests
 
 ```sql
-SELECT ingest_id, source_id, status, n_files, created_at
+SELECT ingest_id, source_id, status
 FROM governance.batch_log
-ORDER BY created_at DESC;
+ORDER BY batch_started_at_utc DESC;
 ```
 
 ### View Profiling Results
@@ -132,14 +136,12 @@ SELECT table_name, variable_name, sentinel_value,
 FROM governance.data_profile_sentinel
 WHERE ingest_id = 'ING_cisir2026_toy_20260128_170000'
 ORDER BY sentinel_pct DESC;
+```
 
--- Numeric distribution statistics
-SELECT table_name, variable_name, stat_min, stat_max,
-       stat_mean, stat_median, stat_sd
-FROM governance.data_profile_distribution
-WHERE ingest_id = 'ING_cisir2026_toy_20260128_170000'
-  AND distribution_type = 'numeric'
-ORDER BY table_name, variable_name;
+### Review Results
+
+```r
+source("r/review/review_step5_profiling.R")
 ```
 
 ---
@@ -151,7 +153,7 @@ ORDER BY table_name, variable_name;
 ```r
 result <- profile_data(con, ingest_id, "raw")
 
-result$tables_profiled     # Number of raw tables profiled
+result$tables_profiled     # Number of tables profiled
 result$variables_profiled  # Total columns across all tables
 result$sentinels_detected  # Number of sentinel values found
 result$critical_issues     # Critical-severity issue count
@@ -178,6 +180,31 @@ result$overall_score       # Worst per-table quality score
 | Whitespace | Yes | `"  "`, `"\t"` |
 | Sentinel | Yes | `"999"`, `"UNKNOWN"` |
 | Valid | No | Any other value |
+
+### Console Output
+
+On completion, the script prints:
+
+```
+===================================================================
+                    STEP 5: PROFILING SUMMARY
+===================================================================
+  Ingest ID:        ING_cisir2026_toy_20260128_170000
+  Schema:           raw
+  Duration:         12.3s
+
+  Tables profiled:  15
+  Variables:        287
+  Sentinels found:  14
+
+  Issues:
+    Critical:       2
+    Warning:        8
+    Info:           23
+
+  Overall Score:    Fair
+===================================================================
+```
 
 ---
 
@@ -207,6 +234,14 @@ Profiling works without a config file (uses hardcoded defaults). To use custom t
 
 Empty tables receive an `Excellent` score with no variable profiles. This is expected behavior.
 
+### "Invalid database connection"
+
+Check that the PULSE database is running and environment variables are set:
+```r
+Sys.getenv("PULSE_DB")
+Sys.getenv("PULSE_HOST")
+```
+
 ---
 
 ## File Locations
@@ -214,15 +249,18 @@ Empty tables receive an `Excellent` score with no variable profiles. This is exp
 | Purpose | Path |
 |---------|------|
 | User script | `r/scripts/5_profile_data.R` |
-| Orchestrator | `r/steps/profile_data.R` |
-| Config loader | `r/utilities/load_profiling_config.R` |
-| Type inference | `r/utilities/infer_column_type.R` |
+| Profiling orchestrator | `r/steps/profile_data.R` |
+| Table profiler | `r/profiling/profile_table.R` |
 | Sentinel detection | `r/profiling/detect_sentinels.R` |
 | Missingness profiler | `r/profiling/profile_missingness.R` |
 | Distribution profiler | `r/profiling/profile_distribution.R` |
 | Issue generator | `r/profiling/generate_issues.R` |
 | Quality scorer | `r/profiling/calculate_quality_score.R` |
-| Table profiler | `r/profiling/profile_table.R` |
+| Config loader | `r/utilities/load_profiling_config.R` |
+| Type inference | `r/utilities/infer_column_type.R` |
+| Audit event writer | `r/steps/write_audit_event.R` |
+| Results review | `r/review/review_step5_profiling.R` |
+| Bootstrap | `pulse-init-all.R` |
 | Profiling config | `config/profiling_settings.yml` |
 | Profile DDL | `sql/ddl/create_DATA_PROFILE.sql` |
 | Distribution DDL | `sql/ddl/create_DATA_PROFILE_DISTRIBUTION.sql` |

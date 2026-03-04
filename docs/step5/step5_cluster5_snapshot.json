@@ -2,7 +2,10 @@
   "version": "step5_cluster5_snapshot_v1",
   "description": "PULSE pipeline Step 5 x Cluster 5 (Data Profiling) -- code + structure snapshot.",
   "schemas": {
-    "governance": "governance"
+    "governance": "governance",
+    "raw": "raw",
+    "staging": "staging",
+    "validated": "validated"
   },
   "db_objects": {
     "tables": [
@@ -37,6 +40,12 @@
         "key_columns": ["summary_id", "ingest_id", "schema_name", "table_name", "row_count", "variable_count", "avg_valid_pct", "min_valid_pct", "max_missing_pct", "critical_issue_count", "warning_issue_count", "info_issue_count", "quality_score", "worst_variable", "worst_variable_missing_pct"]
       }
     ]
+  },
+  "configs": {
+    "profiling_settings": {
+      "file": "config/profiling_settings.yml",
+      "usage": "Quality score thresholds, missingness thresholds, sentinel lists, identifier patterns, display settings."
+    }
   },
   "functions": [
     {
@@ -116,6 +125,10 @@
     {
       "path": "r/scripts/5_profile_data.R",
       "purpose": "Human-friendly Step 5 entry: set ingest_id and schema, call profile_data(), print quality summary."
+    },
+    {
+      "path": "r/review/review_step5_profiling.R",
+      "purpose": "Review script for examining profiling results: quality scores, issues, missingness, sentinels, and distributions."
     }
   ],
   "config_files": [

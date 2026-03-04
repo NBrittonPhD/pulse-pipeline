@@ -5,7 +5,7 @@
 
 ## Governance Objectives
 
-Step 5 ensures that every raw table ingested into the data lake is systematically profiled for data quality before harmonization begins. Profiling results are stored in governed database tables, enabling reproducible quality assessment, issue tracking, and compliance review.
+Step 5 ensures that every table ingested into the data lake is systematically profiled for data quality before harmonization begins. Profiling results are stored in governed database tables, enabling reproducible quality assessment, issue tracking, and compliance review.
 
 ---
 
@@ -142,7 +142,7 @@ To re-profile an ingest:
 
 - [ ] All 5 profiling governance tables exist in database
 - [ ] Profiling config file exists at `config/profiling_settings.yml`
-- [ ] All raw tables from the ingest have been profiled
+- [ ] All tables from the ingest have been profiled
 - [ ] Every column has a missingness profile in `governance.data_profile`
 - [ ] Every column has a distribution record in `governance.data_profile_distribution`
 - [ ] Sentinel values detected and recorded in `governance.data_profile_sentinel`
@@ -151,6 +151,7 @@ To re-profile an ingest:
 - [ ] Overall ingest score is the worst per-table score
 - [ ] Audit log event written for the profiling run
 - [ ] Idempotent re-run produces no duplicate rows
+- [ ] All unit tests passing
 
 ---
 
@@ -164,9 +165,10 @@ To re-profile an ingest:
 | Sentinel Table | `governance.data_profile_sentinel` | Detected placeholder values |
 | Issue Table | `governance.data_profile_issue` | Quality issues flagged |
 | Summary Table | `governance.data_profile_summary` | Per-table quality scores |
+| Audit Log | `governance.audit_log` | Profiling event records |
 | Profile DDL | `sql/ddl/create_DATA_PROFILE.sql` | Table creation script |
 | Distribution DDL | `sql/ddl/create_DATA_PROFILE_DISTRIBUTION.sql` | Table creation script |
 | Sentinel DDL | `sql/ddl/create_DATA_PROFILE_SENTINEL.sql` | Table creation script |
 | Issue DDL | `sql/ddl/create_DATA_PROFILE_ISSUE.sql` | Table creation script |
 | Summary DDL | `sql/ddl/create_DATA_PROFILE_SUMMARY.sql` | Table creation script |
-| Audit Log | `governance.audit_log` | Profiling event records |
+| Unit Tests | `tests/testthat/test_step5_data_profiling.R` | Profiling validation tests |

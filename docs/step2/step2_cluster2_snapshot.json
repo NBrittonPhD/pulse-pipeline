@@ -4,6 +4,7 @@
   "schemas": {
     "governance": "governance",
     "raw": "raw",
+    "staging": "staging",
     "reference": "reference"
   },
   "db_objects": {
@@ -12,21 +13,37 @@
         "name": "governance.batch_log",
         "purpose": "Ingest-level summary log. One row per batch ingestion event.",
         "ddl_file": "sql/ddl/create_BATCH_LOG.sql",
-        "key_columns": ["ingest_id", "source_id", "source_type", "file_count", "files_success", "files_error", "status", "batch_started_at_utc", "batch_completed_at_utc"]
+        "key_columns": ["ingest_id", "ingest_timestamp", "status", "error_message", "file_count", "files_success", "files_error", "batch_started_at_utc", "batch_completed_at_utc", "source_id"]
       },
       {
         "name": "governance.ingest_file_log",
         "purpose": "File-level lineage. One row per file per batch, tracking status, row count, checksum.",
         "ddl_file": "sql/ddl/create_INGEST_FILE_LOG.sql",
-        "key_columns": ["ingest_file_id", "ingest_id", "file_name", "file_path", "lake_table_name", "load_status", "row_count", "file_size_bytes", "checksum", "completed_at_utc"]
+        "key_columns": ["ingest_file_id", "ingest_id", "file_name", "file_path", "lake_table_name", "file_size_bytes", "row_count", "checksum", "load_status", "logged_at_utc", "completed_at_utc"]
       }
     ],
     "seed_data": [
       {
-        "file": "sql/inserts/insert_PIPELINE_STEP_step2.sql",
+        "file": "sql/inserts/pipeline_steps/STEP_002_batch_logging_and_ingestion.sql",
         "notes": "Seeds STEP_002 definition into governance.pipeline_step."
       }
     ]
+  },
+  "configs": {
+    "pipeline_settings": {
+      "file": "config/pipeline_settings.yml",
+      "usage": "Controlled vocabularies and schema definitions."
+    },
+    "ingest_dictionary": {
+      "file": "reference/ingest_dictionary.xlsx",
+      "usage": "Source-to-lake column mappings loaded into reference.ingest_dictionary.",
+      "key_fields": ["source_type", "source_table_name", "source_variable_name", "lake_table_name", "lake_variable_name"]
+    },
+    "type_decisions": {
+      "file": "reference/type_decisions/type_decision_table.xlsx",
+      "usage": "Target SQL types per variable for raw-to-staging promotion. Optional.",
+      "key_fields": ["lake_table_name", "lake_variable_name", "final_type", "suggested_type"]
+    }
   },
   "functions": [
     {
@@ -34,23 +51,23 @@
       "file": "r/steps/log_batch_ingest.R",
       "category": "step_logic",
       "description": "Step 2A: create batch_log row and pending ingest_file_log rows per file.",
-      "calls": ["DBI::dbExecute", "glue::glue", "fs::file_info", "readr::read_csv"],
-      "called_by": ["2_ingest_and_log_files.R", "tests"]
+      "calls": ["DBI::dbGetQuery", "DBI::dbExecute", "glue::glue", "normalizePath"],
+      "called_by": ["2_ingest_and_log_files.R", "run_step2_batch_logging", "tests"]
     },
     {
       "name": "ingest_batch",
       "file": "r/steps/log_batch_ingest.R",
       "category": "step_logic",
-      "description": "Step 2B: loop over pending files, call ingest_one_file(), update lineage, finalize batch.",
-      "calls": ["DBI::dbExecute", "DBI::dbGetQuery", "ingest_one_file", "glue::glue"],
-      "called_by": ["2_ingest_and_log_files.R", "tests"]
+      "description": "Step 2B: loop over pending files, call ingest_one_file(), update lineage, promote to staging, finalize batch.",
+      "calls": ["DBI::dbGetQuery", "DBI::dbExecute", "ingest_one_file", "promote_to_staging", "glue::glue", "dplyr::case_when"],
+      "called_by": ["2_ingest_and_log_files.R", "run_step2_batch_logging", "tests"]
     },
     {
       "name": "ingest_one_file",
       "file": "r/steps/ingest.R",
       "category": "ingestion",
-      "description": "Strict type-enforced single-file ingestion into raw.<lake_table> with harmonization and metadata.",
-      "calls": ["get_ingest_dict", "vroom::vroom", "DBI::dbWriteTable", "digest::digest", "align_df_to_raw_table"],
+      "description": "Strict type-enforced single-file ingestion into raw.<lake_table> with dictionary-based harmonization.",
+      "calls": ["get_ingest_dict", "normalize_name", "pick_one", "vroom::vroom", "align_df_to_raw_table", "DBI::dbWriteTable", "digest::digest"],
       "called_by": ["ingest_batch", "direct_testing"]
     },
     {
@@ -62,18 +79,46 @@
       "called_by": ["ingest_one_file", "tests"]
     },
     {
+      "name": "pick_one",
+      "file": "r/steps/ingest.R",
+      "category": "utility",
+      "description": "Extract a single scalar lake_table value from a vector of candidates.",
+      "calls": [],
+      "called_by": ["ingest_one_file"]
+    },
+    {
       "name": "align_df_to_raw_table",
       "file": "r/steps/ingest.R",
       "category": "utility",
-      "description": "Defensive table alignment: ensure data.frame columns match raw table structure before append.",
-      "calls": ["DBI::dbGetQuery", "DBI::dbExecute", "DBI::dbWriteTable"],
+      "description": "Defensive table alignment: create table if missing, add missing columns to table or data.frame, reorder to match.",
+      "calls": ["DBI::dbExistsTable", "DBI::dbWriteTable", "DBI::dbListFields", "DBI::dbExecute", "glue::glue"],
       "called_by": ["ingest_one_file"]
+    },
+    {
+      "name": "promote_to_staging",
+      "file": "r/build_tools/promote_to_staging.R",
+      "category": "promotion",
+      "description": "Promote raw.<table> to staging.<table> via SQL CAST using type_decisions. Transactional with rollback on error.",
+      "calls": ["DBI::dbExistsTable", "DBI::dbGetQuery", "DBI::dbExecute", "DBI::dbQuoteIdentifier", "glue::glue"],
+      "called_by": ["ingest_batch"]
+    },
+    {
+      "name": "run_step2_batch_logging",
+      "file": "r/steps/run_step2_batch_logging.R",
+      "category": "step_wrapper",
+      "description": "Step 2 wrapper for pipeline runner. Derives source_type from ingest_dictionary, runs logging and ingestion, writes pipeline_step.",
+      "calls": ["load_source_params", "DBI::dbReadTable", "log_batch_ingest", "ingest_batch", "write_pipeline_step"],
+      "called_by": ["execute_step", "tests"]
     }
   ],
   "scripts": [
     {
       "path": "r/scripts/2_ingest_and_log_files.R",
-      "purpose": "Human-friendly Step 2 entry: derive ingest_id, list CSVs, call log_batch_ingest() and ingest_batch()."
+      "purpose": "Human-friendly Step 2 entry: set source_id/source_type, list CSVs, call log_batch_ingest() and ingest_batch()."
+    },
+    {
+      "path": "r/steps/run_step2_batch_logging.R",
+      "purpose": "Pipeline runner wrapper for Step 2 orchestration."
     }
   ],
   "tests": {
@@ -86,6 +131,7 @@
     "batch_logging_working": true,
     "file_lineage_working": true,
     "strict_type_enforcement_working": true,
+    "staging_promotion_working": true,
     "unit_tests_pass": true,
     "runner_integration_complete": true
   }

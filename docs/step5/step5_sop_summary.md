@@ -3,13 +3,13 @@
 
 ---
 
-Step 5 profiles all raw tables from a given ingest batch to assess data quality before harmonization. It computes missingness breakdowns, distribution statistics, sentinel value detection, quality issues, and per-table quality scores.
+Step 5 profiles all tables from a given ingest batch to assess data quality before harmonization. It computes missingness breakdowns, distribution statistics, sentinel value detection, quality issues, and per-table quality scores.
 
 ---
 
 ## Purpose
 
-- Profile every column in every raw table from an ingest batch.
+- Profile every column in every table from an ingest batch.
 - Classify values into mutually exclusive categories: NA, empty, whitespace, sentinel, valid.
 - Detect sentinel/placeholder values (e.g., 999, UNKNOWN) using config lists and frequency analysis.
 - Compute distribution statistics appropriate to each column type (numeric stats, categorical frequencies).
@@ -21,20 +21,26 @@ Step 5 profiles all raw tables from a given ingest batch to assess data quality 
 
 ## Step-by-Step Summary
 
-1. **Load profiling configuration.**
+1. **User edits input parameters.**
+   In `r/scripts/5_profile_data.R`, set `ingest_id`, `schema_to_profile`, and `config_path`.
+
+2. **Initialize PULSE system.**
+   `pulse-init-all.R` sets up DB connection infrastructure and sources required functions.
+
+3. **Load profiling configuration.**
    `load_profiling_config()` reads `config/profiling_settings.yml`, merging over hardcoded defaults.
 
-2. **Verify ingest exists.**
+4. **Verify ingest exists.**
    Confirm the `ingest_id` exists in `governance.batch_log`.
 
-3. **Get tables from ingest file log.**
-   Query `governance.ingest_file_log` for all successfully loaded tables in the batch.
+5. **Get tables to profile.**
+   Query `governance.ingest_file_log` (for raw/staging) or `governance.transform_log` (for validated) for all successfully loaded tables in the batch.
 
-4. **Clear prior profiling data (idempotency).**
+6. **Clear prior profiling data (idempotency).**
    Delete existing profiling rows for `(ingest_id, schema_name)` from all 5 profiling tables.
 
-5. **Profile each table.**
-   For each raw table, call `profile_table()` which:
+7. **Profile each table.**
+   For each table, call `profile_table()` which:
    - Infers column types (numeric, categorical, date, identifier)
    - Detects sentinel values
    - Profiles missingness (mutually exclusive classification)
@@ -42,14 +48,14 @@ Step 5 profiles all raw tables from a given ingest batch to assess data quality 
    - Generates quality issues
    - Calculates per-table quality score
 
-6. **Write results to database.**
+8. **Write results to database.**
    Append profiling results to all 5 `governance.data_profile*` tables.
 
-7. **Compute overall score.**
+9. **Compute overall score.**
    Overall score is the worst per-table score across all tables.
 
-8. **Write audit event.**
-   A summary record is written to `governance.audit_log`.
+10. **Write audit event.**
+    A summary record is written to `governance.audit_log` via `write_audit_event()`.
 
 ---
 
@@ -74,9 +80,12 @@ flowchart TD
     C --> D[profile_data]
     D --> E[load_profiling_config]
     D --> F[Verify ingest_id in batch_log]
-    F --> G[Get tables from ingest_file_log]
-    G --> H[Delete prior profiling data]
-    H --> I[For each raw table]
+    F --> G{Schema?}
+    G -->|raw/staging| G1[Get tables from ingest_file_log]
+    G -->|validated| G2[Get tables from transform_log]
+    G1 --> H[Delete prior profiling data]
+    G2 --> H
+    H --> I[For each table]
     I --> J[profile_table]
     J --> J1[infer_column_type]
     J --> J2[detect_sentinels]
@@ -120,16 +129,43 @@ flowchart TD
 
 - 5 DDL files created and executed
 - Config file created with sentinel lists and thresholds
-- All R functions created (8 functions across 3 directories)
+- All R functions created (9 functions across 3 directories)
 - User script runs successfully end-to-end
 - Profiling results written to all 5 governance tables
 - Quality scores calculated correctly
 - Idempotent re-runs produce no duplicate rows
 - Audit log event written
-- Tests pass (168 PASS, 0 FAIL)
+- All unit tests passing
 
 ---
 
 ## Next Step
 
 After Step 5 is complete, proceed to **Step 6: Harmonization** (`r/scripts/6_harmonize_data.R`).
+
+---
+
+## Files Involved
+
+| Component | Path |
+|-----------|------|
+| User script | `r/scripts/5_profile_data.R` |
+| Profiling orchestrator | `r/steps/profile_data.R` |
+| Table profiler | `r/profiling/profile_table.R` |
+| Sentinel detection | `r/profiling/detect_sentinels.R` |
+| Missingness profiler | `r/profiling/profile_missingness.R` |
+| Distribution profiler | `r/profiling/profile_distribution.R` |
+| Issue generator | `r/profiling/generate_issues.R` |
+| Quality scorer | `r/profiling/calculate_quality_score.R` |
+| Config loader | `r/utilities/load_profiling_config.R` |
+| Type inference | `r/utilities/infer_column_type.R` |
+| Audit event writer | `r/steps/write_audit_event.R` |
+| Results review | `r/review/review_step5_profiling.R` |
+| Bootstrap | `pulse-init-all.R` |
+| Profiling config | `config/profiling_settings.yml` |
+| Profile DDL | `sql/ddl/create_DATA_PROFILE.sql` |
+| Distribution DDL | `sql/ddl/create_DATA_PROFILE_DISTRIBUTION.sql` |
+| Sentinel DDL | `sql/ddl/create_DATA_PROFILE_SENTINEL.sql` |
+| Issue DDL | `sql/ddl/create_DATA_PROFILE_ISSUE.sql` |
+| Summary DDL | `sql/ddl/create_DATA_PROFILE_SUMMARY.sql` |
+| Unit tests | `tests/testthat/test_step5_data_profiling.R` |

@@ -11,7 +11,7 @@
 # 1. Ensure the Excel dictionary is up to date:
 #    reference/CURRENT_core_metadata_dictionary.xlsx
 
-# 2. Run the script
+# 2. Run:
 source("r/scripts/4_sync_metadata.R")
 ```
 
@@ -24,6 +24,8 @@ Before running Step 4:
 1. **Steps 1-3 completed**: Source registered, data ingested, schema validated
 2. **Excel dictionary current**: `reference/CURRENT_core_metadata_dictionary.xlsx` contains all variable definitions
 3. **Database tables exist**: `reference.metadata` and `reference.metadata_history` (created by DDLs)
+4. **PostgreSQL running**: The PULSE database must be accessible
+5. **Environment variables set**: `PULSE_DB`, `PULSE_HOST`, `PULSE_USER`, `PULSE_PW`
 
 ---
 
@@ -107,6 +109,12 @@ WHERE is_active = TRUE
 GROUP BY source_type;
 ```
 
+### Review Results
+
+```r
+source("r/review/review_step4_metadata.R")
+```
+
 ---
 
 ## Understanding Results
@@ -133,6 +141,24 @@ result$rows_synced      # Total rows written to metadata table
 | `ADD` | Variable exists in Excel but not in database |
 | `UPDATE` | Variable exists in both but a field value changed |
 | `REMOVE` | Variable exists in database but not in Excel |
+
+### Console Output
+
+On completion, the script prints:
+
+```
+=================================================================
+[run_step4] STEP 4 COMPLETE
+=================================================================
+  Version:         6
+  Total Variables: 1268
+  Adds:            0
+  Updates:         3
+  Removes:         0
+  Total Changes:   3
+  Duration:        1.87 seconds
+=================================================================
+```
 
 ---
 
@@ -161,6 +187,14 @@ dict %>% dplyr::count(lake_table_name, lake_variable_name, source_type) %>% dply
 
 If the Excel dictionary hasn't changed since the last sync, no history records are written and the version still increments. This is expected behavior.
 
+### "Invalid database connection"
+
+Check that the PULSE database is running and environment variables are set:
+```r
+Sys.getenv("PULSE_DB")
+Sys.getenv("PULSE_HOST")
+```
+
 ---
 
 ## File Locations
@@ -168,10 +202,13 @@ If the Excel dictionary hasn't changed since the last sync, no history records a
 | Purpose | Path |
 |---------|------|
 | User script | `r/scripts/4_sync_metadata.R` |
-| Sync function | `r/reference/sync_metadata.R` |
+| Sync orchestrator | `r/reference/sync_metadata.R` |
 | Dictionary loader | `r/reference/load_metadata_dictionary.R` |
 | Comparison engine | `r/utilities/compare_metadata.R` |
 | Version helper | `r/reference/get_current_metadata_version.R` |
+| Audit event writer | `r/steps/write_audit_event.R` |
+| Results review | `r/review/review_step4_metadata.R` |
+| Bootstrap | `pulse-init-all.R` |
 | Metadata dictionary | `reference/CURRENT_core_metadata_dictionary.xlsx` |
 | Metadata DDL | `sql/ddl/recreate_METADATA_v2.sql` |
 | History DDL | `sql/ddl/create_METADATA_HISTORY.sql` |
